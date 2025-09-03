@@ -17,9 +17,29 @@ namespace BootstrapMate
     class Program
     {
         private static string LogDirectory = @"C:\ProgramData\ManagedBootstrap\logs";
+        private static string CacheDirectory = @"C:\ProgramData\ManagedBootstrap\cache";
         
         // Version in YYYY.MM.DD.HHMM format
-        private static readonly string Version = "2025.08.30.1757";
+        private static readonly string Version = "2025.09.02.1749";
+
+        static string GetCacheDirectory()
+        {
+            try
+            {
+                Directory.CreateDirectory(CacheDirectory);
+                return CacheDirectory;
+            }
+            catch (Exception ex)
+            {
+                Logger.Warning($"Could not create cache directory {CacheDirectory}: {ex.Message}");
+                Logger.Debug("Falling back to temp directory for cache");
+                
+                // Fallback to temp directory if we can't create the ProgramData cache
+                string fallbackDir = Path.Combine(Path.GetTempPath(), "BootstrapMate");
+                Directory.CreateDirectory(fallbackDir);
+                return fallbackDir;
+            }
+        }
 
         static bool IsRunningAsAdministrator()
         {
@@ -192,6 +212,7 @@ namespace BootstrapMate
                 Console.WriteLine("  installapplications.exe --version");
                 Console.WriteLine("  installapplications.exe --status");
                 Console.WriteLine("  installapplications.exe --clear-cache");
+                Console.WriteLine("  installapplications.exe --reset-chocolatey");
                 Console.WriteLine("  installapplications.exe --url <manifest-url> --force");
                 Console.WriteLine("  installapplications.exe --url <manifest-url> --verbose");
                 Console.WriteLine();
@@ -203,7 +224,8 @@ namespace BootstrapMate
                 Console.WriteLine("  --version       Show version information");
                 Console.WriteLine("  --status        Show current installation status");
                 Console.WriteLine("  --clear-status  Clear all installation status data");
-                Console.WriteLine("  --clear-cache   Clear downloaded package cache");
+                Console.WriteLine("  --clear-cache   Clear package cache (C:\\ProgramData\\ManagedBootstrap\\cache)");
+                Console.WriteLine("  --reset-chocolatey  Complete Chocolatey reset (removes corrupted lib folder)");
                 return 0;
             }
             
@@ -238,6 +260,9 @@ namespace BootstrapMate
 
                     case "--clear-cache":
                         return ClearCache();
+
+                    case "--reset-chocolatey":
+                        return ResetChocolatey();
 
                     case "--force":
                         forceDownload = true;
@@ -467,11 +492,10 @@ namespace BootstrapMate
         {
             try
             {
-                // Create temp download directory
-                string tempDir = Path.Combine(Path.GetTempPath(), "BootstrapMate");
-                Directory.CreateDirectory(tempDir);
+                // Create cache download directory
+                string cacheDir = GetCacheDirectory();
                 
-                string localPath = Path.Combine(tempDir, fileName);
+                string localPath = Path.Combine(cacheDir, fileName);
                 
                 // Check if file exists and force download if requested
                 bool needsDownload = forceDownload || !File.Exists(localPath);
@@ -735,21 +759,198 @@ namespace BootstrapMate
             }
         }
         
+        static string FindChocolateyExecutable()
+        {
+            // Try common Chocolatey installation paths in order of preference
+            string[] candidatePaths = {
+                // Check environment variable first
+                Environment.GetEnvironmentVariable("ChocolateyInstall") + @"\bin\choco.exe",
+                // Standard installation paths
+                @"C:\ProgramData\chocolatey\bin\choco.exe",
+                @"C:\Chocolatey\bin\choco.exe",
+                @"C:\tools\chocolatey\bin\choco.exe"
+            };
+            
+            foreach (string candidatePath in candidatePaths)
+            {
+                if (!string.IsNullOrEmpty(candidatePath) && File.Exists(candidatePath))
+                {
+                    Logger.Debug($"Found Chocolatey executable at: {candidatePath}");
+                    return candidatePath;
+                }
+            }
+            
+            // Fallback to PATH resolution
+            try
+            {
+                var startInfo = new ProcessStartInfo
+                {
+                    FileName = "where.exe",
+                    Arguments = "choco.exe",
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true
+                };
+                
+                using var process = Process.Start(startInfo);
+                if (process != null)
+                {
+                    process.WaitForExit(5000); // 5 second timeout
+                    if (process.ExitCode == 0)
+                    {
+                        string output = process.StandardOutput.ReadToEnd().Trim();
+                        if (!string.IsNullOrEmpty(output))
+                        {
+                            var lines = output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+                            if (lines.Length > 0 && File.Exists(lines[0]))
+                            {
+                                Logger.Debug($"Found Chocolatey executable via WHERE command: {lines[0]}");
+                                return lines[0];
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Debug($"WHERE command failed: {ex.Message}");
+            }
+            
+            // Last resort: assume choco.exe is in PATH
+            Logger.Warning("Could not locate Chocolatey executable, falling back to 'choco.exe'");
+            return "choco.exe";
+        }
+
+        static void CleanupChocolateyLib()
+        {
+            try
+            {
+                string chocolateyLibPath = @"C:\ProgramData\chocolatey\lib";
+                
+                if (!Directory.Exists(chocolateyLibPath))
+                {
+                    Logger.Debug("Chocolatey lib directory does not exist - no cleanup needed");
+                    return;
+                }
+                
+                Logger.Debug("Cleaning up potentially corrupted Chocolatey lib directory...");
+                Logger.WriteSubProgress("Cleaning Chocolatey cache", "Removing corrupted packages");
+                
+                // Get all subdirectories in the lib folder
+                var libDirectories = Directory.GetDirectories(chocolateyLibPath);
+                int cleanedCount = 0;
+                
+                foreach (string libDir in libDirectories)
+                {
+                    try
+                    {
+                        string packageName = Path.GetFileName(libDir);
+                        
+                        // Look for .nupkg files in this package directory
+                        var nupkgFiles = Directory.GetFiles(libDir, "*.nupkg", SearchOption.TopDirectoryOnly);
+                        
+                        foreach (string nupkgFile in nupkgFiles)
+                        {
+                            try
+                            {
+                                // Test if the .nupkg file is a valid ZIP archive
+                                using var archive = ZipFile.OpenRead(nupkgFile);
+                                var entries = archive.Entries; // This will throw if corrupted
+                                Logger.Debug($"Package {packageName} - nupkg file is valid");
+                            }
+                            catch (Exception ex)
+                            {
+                                Logger.Warning($"Found corrupted nupkg file: {nupkgFile} - {ex.Message}");
+                                Logger.Debug($"Removing corrupted package directory: {libDir}");
+                                
+                                // Remove the entire package directory if nupkg is corrupted
+                                Directory.Delete(libDir, true);
+                                cleanedCount++;
+                                
+                                Logger.Debug($"Cleaned corrupted package: {packageName}");
+                                break; // Move to next package directory
+                            }
+                        }
+                        
+                        // Also check for directories without .nupkg files (incomplete installations)
+                        if (nupkgFiles.Length == 0)
+                        {
+                            // Check if this looks like an incomplete installation
+                            var filesInDir = Directory.GetFiles(libDir, "*", SearchOption.AllDirectories);
+                            var directoriesInDir = Directory.GetDirectories(libDir, "*", SearchOption.AllDirectories);
+                            
+                            // If there are no nupkg files but there are other files/dirs, it might be incomplete
+                            if (filesInDir.Length > 0 || directoriesInDir.Length > 0)
+                            {
+                                Logger.Warning($"Found package directory without nupkg file: {packageName}");
+                                Logger.Debug($"Removing incomplete package directory: {libDir}");
+                                
+                                Directory.Delete(libDir, true);
+                                cleanedCount++;
+                                
+                                Logger.Debug($"Cleaned incomplete package: {packageName}");
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.Warning($"Could not process package directory {libDir}: {ex.Message}");
+                        // Continue with other packages
+                    }
+                }
+                
+                if (cleanedCount > 0)
+                {
+                    Logger.Info($"Cleaned up {cleanedCount} corrupted/incomplete Chocolatey packages");
+                    Logger.WriteSubProgress("Chocolatey cleanup complete", $"Removed {cleanedCount} corrupted packages");
+                }
+                else
+                {
+                    Logger.Debug("No corrupted Chocolatey packages found");
+                }
+                
+                // Also clean up any orphaned temp files in the chocolatey root
+                try
+                {
+                    string chocolateyRoot = @"C:\ProgramData\chocolatey";
+                    var tempFiles = Directory.GetFiles(chocolateyRoot, "*.tmp", SearchOption.TopDirectoryOnly);
+                    var lockFiles = Directory.GetFiles(chocolateyRoot, "*.lock", SearchOption.AllDirectories);
+                    
+                    foreach (string tempFile in tempFiles.Concat(lockFiles))
+                    {
+                        try
+                        {
+                            File.Delete(tempFile);
+                            Logger.Debug($"Removed temp/lock file: {Path.GetFileName(tempFile)}");
+                        }
+                        catch
+                        {
+                            // Ignore errors deleting temp files
+                        }
+                    }
+                }
+                catch
+                {
+                    // Ignore errors in temp file cleanup
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Warning($"Chocolatey lib cleanup failed: {ex.Message}");
+                // Don't fail the entire process if cleanup fails
+            }
+        }
+        
         static async Task EnsureChocolateyInstalled()
         {
             Logger.Debug("Checking if Chocolatey is installed...");
             
-            // Find chocolatey executable path  
-            string chocoPath = "choco.exe";
-            string? chocoInstallPath = Environment.GetEnvironmentVariable("ChocolateyInstall");
-            if (!string.IsNullOrEmpty(chocoInstallPath))
-            {
-                string fullChocoPath = Path.Combine(chocoInstallPath, "bin", "choco.exe");
-                if (File.Exists(fullChocoPath))
-                {
-                    chocoPath = fullChocoPath;
-                }
-            }
+            // FIRST: Clean up any corrupted Chocolatey lib directory
+            CleanupChocolateyLib();
+            
+            // Find chocolatey executable path using improved method
+            string chocoPath = FindChocolateyExecutable();
             
             var chocoCheck = new ProcessStartInfo
             {
@@ -775,8 +976,9 @@ namespace BootstrapMate
                     }
                 }
             }
-            catch
+            catch (Exception ex)
             {
+                Logger.Debug($"Chocolatey check failed: {ex.Message}");
                 // choco.exe not found, need to install
             }
             
@@ -814,7 +1016,50 @@ namespace BootstrapMate
                 // Refresh environment variables to pick up chocolatey PATH
                 Logger.Debug("Refreshing environment variables...");
                 RefreshEnvironmentPath();
+                
+                // Wait a moment for the installation to settle
+                await Task.Delay(2000);
+                
+                // Verify installation by re-checking with updated paths
+                string newChocoPath = FindChocolateyExecutable();
+                if (newChocoPath != "choco.exe" || await VerifyChocolateyInstallation(newChocoPath))
+                {
+                    Logger.Debug($"Chocolatey installation verified at: {newChocoPath}");
+                }
+                else
+                {
+                    Logger.Warning("Chocolatey installation could not be verified, but proceeding anyway");
+                }
             }
+        }
+        
+        static async Task<bool> VerifyChocolateyInstallation(string chocoPath)
+        {
+            try
+            {
+                var verifyStartInfo = new ProcessStartInfo
+                {
+                    FileName = chocoPath,
+                    Arguments = "--version",
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true
+                };
+                
+                using var process = Process.Start(verifyStartInfo);
+                if (process != null)
+                {
+                    await process.WaitForExitAsync();
+                    return process.ExitCode == 0;
+                }
+            }
+            catch
+            {
+                // Verification failed
+            }
+            
+            return false;
         }
         
         static void RefreshEnvironmentPath()
@@ -824,12 +1069,43 @@ namespace BootstrapMate
                 // Get the current PATH from the registry (machine and user)
                 string machinePath = Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.Machine) ?? "";
                 string userPath = Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.User) ?? "";
-                string combinedPath = machinePath + ";" + userPath;
+                
+                // Check for Chocolatey installation paths and add them if missing
+                List<string> additionalPaths = new List<string>();
+                
+                // Common Chocolatey installation paths
+                string[] chocolateyPaths = {
+                    @"C:\ProgramData\chocolatey\bin",
+                    @"C:\Chocolatey\bin",
+                    Environment.GetEnvironmentVariable("ChocolateyInstall") + @"\bin"
+                };
+                
+                foreach (string chocoPath in chocolateyPaths)
+                {
+                    if (!string.IsNullOrEmpty(chocoPath) && Directory.Exists(chocoPath))
+                    {
+                        string chocoExePath = Path.Combine(chocoPath, "choco.exe");
+                        if (File.Exists(chocoExePath))
+                        {
+                            // Check if this path is already in the combined PATH
+                            string combinedCurrentPath = machinePath + ";" + userPath;
+                            if (!combinedCurrentPath.ToLowerInvariant().Contains(chocoPath.ToLowerInvariant()))
+                            {
+                                additionalPaths.Add(chocoPath);
+                                Logger.Debug($"Adding Chocolatey path to PATH: {chocoPath}");
+                            }
+                            break; // Found a working chocolatey installation
+                        }
+                    }
+                }
+                
+                // Combine all paths
+                string combinedPath = string.Join(";", new[] { machinePath, userPath }.Concat(additionalPaths).Where(p => !string.IsNullOrEmpty(p)));
                 
                 // Update the current process PATH
                 Environment.SetEnvironmentVariable("PATH", combinedPath, EnvironmentVariableTarget.Process);
                 
-                Logger.Debug("Environment PATH refreshed");
+                Logger.Debug($"Environment PATH refreshed with {additionalPaths.Count} additional Chocolatey paths");
             }
             catch (Exception ex)
             {
@@ -842,17 +1118,8 @@ namespace BootstrapMate
         {
             try
             {
-                // Find chocolatey executable path
-                string chocoPath = "choco.exe";
-                string? chocoInstallPath = Environment.GetEnvironmentVariable("ChocolateyInstall");
-                if (!string.IsNullOrEmpty(chocoInstallPath))
-                {
-                    string fullChocoPath = Path.Combine(chocoInstallPath, "bin", "choco.exe");
-                    if (File.Exists(fullChocoPath))
-                    {
-                        chocoPath = fullChocoPath;
-                    }
-                }
+                // Find chocolatey executable path using improved method
+                string chocoPath = FindChocolateyExecutable();
                 
                 // Use 'choco list' to check if package is installed (modern Chocolatey syntax)
                 var startInfo = new ProcessStartInfo
@@ -999,17 +1266,8 @@ namespace BootstrapMate
                 arguments = $"{action} \"{packageId}\" --source=\"{packageDir}\" -y --ignore-checksums --acceptlicense --confirm --force {string.Join(" ", args)}";
             }
 
-            // Find chocolatey executable path
-            string chocoPath = "choco.exe";
-            string? chocoInstallPath = Environment.GetEnvironmentVariable("ChocolateyInstall");
-            if (!string.IsNullOrEmpty(chocoInstallPath))
-            {
-                string fullChocoPath = Path.Combine(chocoInstallPath, "bin", "choco.exe");
-                if (File.Exists(fullChocoPath))
-                {
-                    chocoPath = fullChocoPath;
-                }
-            }
+            // Find chocolatey executable path using improved method
+            string chocoPath = FindChocolateyExecutable();
 
             // In ESP environment, BootstrapMate should already be running elevated
             // Use PowerShell to run Chocolatey and capture output for better error reporting
@@ -1291,15 +1549,15 @@ namespace BootstrapMate
         {
             try
             {
-                string tempDir = Path.Combine(Path.GetTempPath(), "BootstrapMate");
-                if (Directory.Exists(tempDir))
+                string cacheDir = GetCacheDirectory();
+                if (Directory.Exists(cacheDir))
                 {
-                    Directory.Delete(tempDir, true);
-                    Logger.Debug($"Cleared package cache directory: {tempDir}");
+                    Directory.Delete(cacheDir, true);
+                    Logger.Debug($"Cleared package cache directory: {cacheDir}");
                 }
                 else
                 {
-                    Logger.Debug($"Package cache directory does not exist: {tempDir}");
+                    Logger.Debug($"Package cache directory does not exist: {cacheDir}");
                 }
             }
             catch (Exception ex)
@@ -1312,14 +1570,14 @@ namespace BootstrapMate
         {
             try
             {
-                string tempDir = Path.Combine(Path.GetTempPath(), "BootstrapMate");
-                if (!Directory.Exists(tempDir))
+                string cacheDir = GetCacheDirectory();
+                if (!Directory.Exists(cacheDir))
                 {
                     return; // No cache directory exists
                 }
 
                 var cutoffTime = DateTime.Now - maxAge;
-                var files = Directory.GetFiles(tempDir, "*", SearchOption.AllDirectories);
+                var files = Directory.GetFiles(cacheDir, "*", SearchOption.AllDirectories);
                 int cleanedCount = 0;
 
                 foreach (var file in files)
@@ -1343,7 +1601,7 @@ namespace BootstrapMate
                 // Try to remove empty directories
                 try
                 {
-                    var directories = Directory.GetDirectories(tempDir, "*", SearchOption.AllDirectories);
+                    var directories = Directory.GetDirectories(cacheDir, "*", SearchOption.AllDirectories);
                     foreach (var dir in directories.OrderByDescending(d => d.Length)) // Delete deepest first
                     {
                         try
@@ -1382,17 +1640,17 @@ namespace BootstrapMate
             {
                 Console.WriteLine("Clearing BootstrapMate package cache...");
                 
-                string tempDir = Path.Combine(Path.GetTempPath(), "BootstrapMate");
-                if (Directory.Exists(tempDir))
+                string cacheDir = GetCacheDirectory();
+                if (Directory.Exists(cacheDir))
                 {
-                    Directory.Delete(tempDir, true);
-                    Console.WriteLine($"[+] Cleared package cache: {tempDir}");
-                    Logger.Info($"Manually cleared package cache: {tempDir}");
+                    Directory.Delete(cacheDir, true);
+                    Console.WriteLine($"[+] Cleared package cache: {cacheDir}");
+                    Logger.Info($"Manually cleared package cache: {cacheDir}");
                 }
                 else
                 {
-                    Console.WriteLine($"ℹ️  Package cache directory does not exist: {tempDir}");
-                    Logger.Info($"Package cache directory does not exist: {tempDir}");
+                    Console.WriteLine($"ℹ️  Package cache directory does not exist: {cacheDir}");
+                    Logger.Info($"Package cache directory does not exist: {cacheDir}");
                 }
 
                 return 0;
@@ -1401,6 +1659,152 @@ namespace BootstrapMate
             {
                 Console.WriteLine($"❌ Error clearing cache: {ex.Message}");
                 Logger.Error($"Error clearing cache: {ex.Message}");
+                return 1;
+            }
+        }
+
+        static int ResetChocolatey()
+        {
+            try
+            {
+                Console.WriteLine("Resetting Chocolatey (complete cleanup)...");
+                Console.WriteLine("⚠️  This will remove ALL Chocolatey packages and force a clean reinstall.");
+                Console.WriteLine();
+                
+                // Confirm with user (unless running in automated scenarios)
+                Console.Write("Are you sure you want to completely reset Chocolatey? (y/N): ");
+                var response = Console.ReadLine()?.Trim().ToLowerInvariant();
+                
+                if (response != "y" && response != "yes")
+                {
+                    Console.WriteLine("Chocolatey reset cancelled.");
+                    return 0;
+                }
+                
+                Logger.Info("Starting complete Chocolatey reset");
+                
+                string chocolateyRoot = @"C:\ProgramData\chocolatey";
+                int removedItems = 0;
+                
+                if (Directory.Exists(chocolateyRoot))
+                {
+                    Console.WriteLine($"[*] Removing Chocolatey directory: {chocolateyRoot}");
+                    
+                    try
+                    {
+                        // Try to stop any running chocolatey processes first
+                        var chocoProcesses = Process.GetProcessesByName("choco");
+                        foreach (var proc in chocoProcesses)
+                        {
+                            try
+                            {
+                                Console.WriteLine($"[*] Terminating chocolatey process (PID: {proc.Id})");
+                                proc.Kill();
+                                proc.WaitForExit(5000);
+                            }
+                            catch
+                            {
+                                // Ignore errors killing processes
+                            }
+                        }
+                        
+                        // Remove the entire chocolatey directory
+                        Directory.Delete(chocolateyRoot, true);
+                        removedItems++;
+                        Console.WriteLine($"[+] Removed Chocolatey directory");
+                        Logger.Info($"Removed Chocolatey directory: {chocolateyRoot}");
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"❌ Error removing Chocolatey directory: {ex.Message}");
+                        Logger.Error($"Error removing Chocolatey directory: {ex.Message}");
+                        
+                        // Try to remove just the lib directory if full removal fails
+                        try
+                        {
+                            string libDir = Path.Combine(chocolateyRoot, "lib");
+                            if (Directory.Exists(libDir))
+                            {
+                                Directory.Delete(libDir, true);
+                                Console.WriteLine($"[+] Removed Chocolatey lib directory (partial cleanup)");
+                                Logger.Info($"Removed Chocolatey lib directory: {libDir}");
+                                removedItems++;
+                            }
+                        }
+                        catch (Exception libEx)
+                        {
+                            Console.WriteLine($"❌ Error removing Chocolatey lib directory: {libEx.Message}");
+                            Logger.Error($"Error removing Chocolatey lib directory: {libEx.Message}");
+                        }
+                    }
+                }
+                else
+                {
+                    Console.WriteLine($"ℹ️  Chocolatey directory does not exist: {chocolateyRoot}");
+                }
+                
+                // Clean up environment variables
+                try
+                {
+                    Console.WriteLine("[*] Cleaning up Chocolatey environment variables");
+                    
+                    // Remove ChocolateyInstall environment variable
+                    Environment.SetEnvironmentVariable("ChocolateyInstall", null, EnvironmentVariableTarget.Machine);
+                    Environment.SetEnvironmentVariable("ChocolateyInstall", null, EnvironmentVariableTarget.User);
+                    
+                    // Clean PATH environment variables (remove chocolatey paths)
+                    string[] pathTargets = { "Machine", "User" };
+                    foreach (string target in pathTargets)
+                    {
+                        try
+                        {
+                            var envTarget = target == "Machine" ? EnvironmentVariableTarget.Machine : EnvironmentVariableTarget.User;
+                            string currentPath = Environment.GetEnvironmentVariable("PATH", envTarget) ?? "";
+                            
+                            // Remove chocolatey-related paths
+                            var pathParts = currentPath.Split(';')
+                                .Where(p => !string.IsNullOrWhiteSpace(p) && 
+                                           !p.ToLowerInvariant().Contains("chocolatey"))
+                                .ToArray();
+                            
+                            string cleanPath = string.Join(";", pathParts);
+                            Environment.SetEnvironmentVariable("PATH", cleanPath, envTarget);
+                            
+                            Logger.Debug($"Cleaned {target} PATH environment variable");
+                        }
+                        catch (Exception pathEx)
+                        {
+                            Logger.Warning($"Could not clean {target} PATH: {pathEx.Message}");
+                        }
+                    }
+                    
+                    Console.WriteLine($"[+] Cleaned environment variables");
+                    removedItems++;
+                }
+                catch (Exception envEx)
+                {
+                    Console.WriteLine($"⚠️  Warning: Could not clean environment variables: {envEx.Message}");
+                    Logger.Warning($"Could not clean environment variables: {envEx.Message}");
+                }
+                
+                Console.WriteLine();
+                if (removedItems > 0)
+                {
+                    Console.WriteLine($"[+] Chocolatey reset completed! Removed {removedItems} items.");
+                    Console.WriteLine("    Chocolatey will be automatically reinstalled when needed.");
+                    Logger.Info($"Chocolatey reset completed successfully. Removed {removedItems} items.");
+                }
+                else
+                {
+                    Console.WriteLine("ℹ️  No Chocolatey installation found to reset.");
+                }
+                
+                return 0;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"❌ Error resetting Chocolatey: {ex.Message}");
+                Logger.Error($"Error resetting Chocolatey: {ex.Message}");
                 return 1;
             }
         }
