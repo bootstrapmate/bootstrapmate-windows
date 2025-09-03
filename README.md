@@ -10,14 +10,46 @@ A lightweight bootstrapping tool for Windows device provisioning that downloads 
 - **Architecture Support**: x64 and ARM64 with conditional installation
 - **Admin Escalation**: Automatic privilege elevation for packages requiring admin rights
 
+## Configuration
+
+Before building, set up your environment variables:
+
+1. **Copy the example environment file**:
+   ```powershell
+   Copy-Item .env.example .env
+   ```
+
+2. **Edit `.env` with your organization's settings**:
+   ```bash
+   # Your code signing certificate Common Name
+   ENTERPRISE_CERT_CN=Your Organization Code Signing Certificate
+   
+   # Your bootstrap manifest URL
+   BOOTSTRAP_MANIFEST_URL=https://your-domain.com/bootstrap/management.json
+   
+   # Optional: Specific certificate thumbprint
+   # CERT_THUMBPRINT=1234567890ABCDEF1234567890ABCDEF12345678
+   ```
+
+3. **Install your code signing certificate** in the Current User certificate store
+
 ## Quick Start
 
 ```powershell
-# Build the application
-.\build.ps1 -Sign
+# Build signed executables + MSI + .intunewin (production)
+.\build.ps1
+
+# Development build (unsigned - for testing only)
+.\build.ps1 -AllowUnsigned
+
+# Build specific architecture
+.\build.ps1 -Architecture x64
+
+# Build without MSI/IntuneWin packages
+.\build.ps1 -SkipMSI
 
 # Run with a manifest URL
-.\publish\x64\installapplications.exe --url <url>
+.\publish\x64\installapplications.exe --url "https://your-domain.com/bootstrap/management.json"
 
 # Check status (useful for troubleshooting)
 .\publish\x64\installapplications.exe --status
@@ -46,6 +78,41 @@ HKLM\SOFTWARE\WOW6432Node\BootstrapMate\Status\Userland
 **For Intune Detection**: Use `HKLM\SOFTWARE\BootstrapMate\LastRunVersion` as your detection key.
 
 ## Intune Implementation
+
+### Option 1: MSI Deployment (Recommended)
+
+The most reliable way to deploy BootstrapMate is using the signed MSI installer:
+
+```powershell
+# Build signed MSI packages with auto-detected certificate
+.\build-msi.ps1
+
+# Build with .intunewin packages for direct Intune upload
+.\build-msi.ps1 -IntuneWin
+
+# Deploy via Intune Win32 app using generated files:
+# - BootstrapMate-x64-VERSION.msi (signed, for x64 systems)
+# - BootstrapMate-arm64-VERSION.msi (signed, for ARM64 systems)  
+# - install-bootstrapmate.ps1 (installation script)
+# - detect-bootstrapmate.ps1 (detection script)
+# - BootstrapMate-x64-VERSION.intunewin (optional, for direct upload)
+# - BootstrapMate-arm64-VERSION.intunewin (optional, for direct upload)
+```
+
+**Benefits of MSI deployment:**
+- ✅ Proper Windows Installer integration
+- ✅ **Code signed with enterprise certificate**
+- ✅ Automatic architecture detection
+- ✅ Clean uninstall capability
+- ✅ Shows in Add/Remove Programs
+- ✅ Reliable upgrade path
+- ✅ **Optional .intunewin packages for direct Intune upload**
+
+See [MSI-DEPLOYMENT.md](MSI-DEPLOYMENT.md) for complete MSI deployment guide.
+
+### Option 2: PowerShell Script Deployment
+
+For simple deployments, you can package the executable with a PowerShell script:
 
 ### Detection Script for Intune Win32 App
 

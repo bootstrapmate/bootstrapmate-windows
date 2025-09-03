@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project Sdk="WixToolset.Sdk/6.0.1">
+
+  <PropertyGroup>
+    <OutputName>BootstrapMate-$(Platform)</OutputName>
+    <OutputType>Package</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <Platform>x64</Platform>
+    <InstallerPlatform>x64</InstallerPlatform>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <ProductVersion Condition="'$(ProductVersion)' == ''">0.0.0</ProductVersion>
+    <BinDir Condition="'$(BinDir)' == ''">$(MSBuildProjectDirectory)\..\publish\executables\$(Platform)</BinDir>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <DefineConstants>BIN_DIR=$(BinDir);ProductVersion=$(ProductVersion)</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Product.wxs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="WixToolset.Util.wixext" Version="6.0.1" />
+  </ItemGroup>
+
+  <Target Name="BeforeBuild">
+    <Error Text="BootstrapMate executable not found at $(BinDir)\installapplications.exe. Please run build.ps1 first."
+           Condition="!Exists('$(BinDir)\installapplications.exe')" />
+  </Target>
+
+</Project>

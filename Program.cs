@@ -20,7 +20,7 @@ namespace BootstrapMate
         private static string CacheDirectory = @"C:\ProgramData\ManagedBootstrap\cache";
         
         // Version in YYYY.MM.DD.HHMM format
-        private static readonly string Version = "2025.09.02.1749";
+        private static readonly string Version = "25.9.2.2354";
 
         static string GetCacheDirectory()
         {

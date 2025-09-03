@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!-- WiX v6 Installer XML for BootstrapMate Application -->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+
+  <?ifndef ProductVersion?>
+    <?define ProductVersion = "0.0.0"?>
+  <?endif?>
+
+  <!-- Package Definition -->
+  <Package Name="BootstrapMate"
+           Version="$(var.ProductVersion)"
+           Manufacturer="Windows Admins Open Source"
+           UpgradeCode="{12345678-1234-5678-9ABC-1234567890AB}"
+           Language="1033"
+           InstallerVersion="500"
+           Compressed="yes"
+           Scope="perMachine">
+
+    <!-- Major Upgrade Settings -->
+    <MajorUpgrade AllowSameVersionUpgrades="no" 
+                  AllowDowngrades="no"
+                  MigrateFeatures="yes"
+                  DowngradeErrorMessage="A newer version of [ProductName] is already installed."
+                  Schedule="afterInstallInitialize" />
+
+    <!-- Media Definition -->
+    <Media Id="1"
+           Cabinet="bootstrapmate.cab"
+           EmbedCab="yes" />
+
+    <!-- Directory Structure -->
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLDIR" Name="BootstrapMate" />
+    </StandardDirectory>
+
+    <!-- Main Application Files -->
+    <Component Id="BootstrapMateExecutable" Directory="INSTALLDIR" Guid="47855CCD-7EAB-464C-A795-26091DE8B83A">
+      <File Id="BootstrapMateExe" Source="$(var.BIN_DIR)\installapplications.exe" />
+    </Component>
+
+    <!-- Registry entries for installation tracking -->
+    <Component Id="RegistryEntries" Directory="INSTALLDIR" Guid="E5F6A7B8-C9D0-1234-EF56-789012345ABC">
+      <RegistryValue Root="HKLM" Key="SOFTWARE\BootstrapMate" Name="InstallPath" Value="[INSTALLDIR]" Type="string" />
+      <RegistryValue Root="HKLM" Key="SOFTWARE\BootstrapMate" Name="Version" Value="$(var.ProductVersion)" Type="string" />
+      <RegistryValue Root="HKLM" Key="SOFTWARE\BootstrapMate" Name="InstallDate" Value="[Date]" Type="string" />
+      <RegistryValue Root="HKLM" Key="SOFTWARE\BootstrapMate" Name="Architecture" Value="[ProcessorArchitecture]" Type="string" />
+    </Component>
+
+    <!-- Environment Variable Component -->
+    <Component Id="SetPathComponent" Directory="INSTALLDIR" Guid="D4E5F6A7-B8C9-0123-DEF4-56789012345A">
+      <Environment Id="UpdatePath" Name="PATH" Value="[INSTALLDIR]" Permanent="no" Part="last" Action="set" Separator=";" System="yes" />
+    </Component>
+
+    <!-- Custom Properties for Bootstrap URL -->
+    <Property Id="BOOTSTRAP_URL" Value="https://example.com/bootstrap.json" />
+    <Property Id="RUN_BOOTSTRAP" Value="0" />
+    
+    <!-- Custom Action: Run BootstrapMate after installation if BOOTSTRAP_URL is provided -->
+    <CustomAction Id="RunBootstrapMate" 
+                  Directory="INSTALLDIR" 
+                  ExeCommand="&quot;[INSTALLDIR]installapplications.exe&quot; --url &quot;[BOOTSTRAP_URL]&quot;"
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="asyncNoWait" />
+
+    <!-- Installation Sequences -->
+    <InstallExecuteSequence>
+      <Custom Action="RunBootstrapMate" After="InstallFiles" 
+              Condition="NOT Installed AND BOOTSTRAP_URL &lt;&gt; &quot;&quot; AND RUN_BOOTSTRAP = &quot;1&quot;" />
+    </InstallExecuteSequence>
+
+    <!-- Feature Definition -->
+    <Feature Id="DefaultFeature" Level="1">
+      <ComponentRef Id="BootstrapMateExecutable" />
+      <ComponentRef Id="RegistryEntries" />
+      <ComponentRef Id="SetPathComponent" />
+    </Feature>
+
+  </Package>
+
+</Wix>

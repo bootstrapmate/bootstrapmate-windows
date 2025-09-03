@@ -393,6 +393,41 @@ connection-strings.json
 .env.production
 
 # ==============================================
+# BootstrapMate Security & Sensitive Files
+# ==============================================
+
+# Sensitive configuration files
+management.json
+bootstrapmate.json
+*.management.json
+*.manifest.json
+
+# Code signing certificates and keys
+*.pfx
+*.p12
+*.p7b
+*.cer
+*.crt
+*.key
+*.pem
+
+# Enterprise-specific build outputs
+*-signed.exe
+*-signed.msi
+*.intunewin
+
+# Debug and testing files
+*-debug.*
+*-test.*
+*-simple.*
+*-clean.*
+Test.wxs
+Product-*.wxs
+build-msi.ps1
+build-msi-simple.ps1
+test-version.ps1
+
+# ==============================================
 # PowerShell Specific
 # ==============================================
 

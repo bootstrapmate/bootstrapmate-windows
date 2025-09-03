@@ -10,8 +10,8 @@
     
     <!-- Version information -->
     <AssemblyTitle>BootstrapMate</AssemblyTitle>
-    <AssemblyDescription>Cimian OOBE Bootstrap Tool for Windows</AssemblyDescription>
-    <AssemblyCompany>Example Organisation</AssemblyCompany>
+    <AssemblyDescription>Windows OOBE Bootstrap Tool</AssemblyDescription>
+    <AssemblyCompany>Your Organization</AssemblyCompany>
     <AssemblyVersion>1.0.0.0</AssemblyVersion>
   </PropertyGroup>
 </Project>
