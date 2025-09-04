@@ -20,7 +20,7 @@ namespace BootstrapMate
         private static string CacheDirectory = @"C:\ProgramData\ManagedBootstrap\cache";
         
         // Version in YYYY.MM.DD.HHMM format
-        private static readonly string Version = "25.9.2.2354";
+        private static readonly string Version = "2025.09.03.1100";
 
         static string GetCacheDirectory()
         {
@@ -109,74 +109,106 @@ namespace BootstrapMate
                 return 0;
             }
             
+            // Check for silent mode - suppress all console output
+            bool silentMode = args.Any(arg => arg.Equals("--silent", StringComparison.OrdinalIgnoreCase));
+            
             // Check for verbose mode
             bool verboseMode = args.Any(arg => arg.Equals("--verbose", StringComparison.OrdinalIgnoreCase) || 
                                               arg.Equals("-v", StringComparison.OrdinalIgnoreCase));
             
-            Logger.Initialize(LogDirectory, Version, verboseMode);
+            Logger.Initialize(LogDirectory, Version, verboseMode, silentMode);
             Logger.Debug("Main() called with arguments: " + string.Join(" ", args));
             
             // Check if running as administrator
             if (!IsRunningAsAdministrator())
             {
-                // Immediate clear message without logger initialization noise
-                Console.WriteLine();
-                Console.WriteLine("❌ ERROR: BootstrapMate must be run as Administrator");
-                Console.WriteLine();
-                Console.WriteLine("   BootstrapMate requires elevated privileges to:");
-                Console.WriteLine("   • Install packages to Program Files");
-                Console.WriteLine("   • Write to HKLM registry keys");
-                Console.WriteLine("   • Install Windows services");
-                Console.WriteLine("   • Manage system components");
-                Console.WriteLine();
-                Console.WriteLine("   Please run BootstrapMate as Administrator, or use:");
-                Console.WriteLine($"   sudo {Path.GetFileName(Environment.ProcessPath ?? "installapplications.exe")} {string.Join(" ", args)}");
-                Console.WriteLine();
+                if (!silentMode)
+                {
+                    // Immediate clear message without logger initialization noise
+                    Console.WriteLine();
+                    Console.WriteLine("❌ ERROR: BootstrapMate must be run as Administrator");
+                    Console.WriteLine();
+                    Console.WriteLine("   BootstrapMate requires elevated privileges to:");
+                    Console.WriteLine("   • Install packages to Program Files");
+                    Console.WriteLine("   • Write to HKLM registry keys");
+                    Console.WriteLine("   • Install Windows services");
+                    Console.WriteLine("   • Manage system components");
+                    Console.WriteLine();
+                    Console.WriteLine("   Please run BootstrapMate as Administrator, or use:");
+                    Console.WriteLine($"   sudo {Path.GetFileName(Environment.ProcessPath ?? "installapplications.exe")} {string.Join(" ", args)}");
+                    Console.WriteLine();
+                }
                 
                 Logger.Info("BootstrapMate is not running as Administrator");
                 
-                // Ask user if they want to restart as admin
-                Console.Write("   Would you like to restart as Administrator? (y/n): ");
-                var response = Console.ReadLine()?.Trim().ToLowerInvariant();
-                
-                if (response == "y" || response == "yes")
+                if (!silentMode)
                 {
-                    Console.WriteLine("   Attempting to restart with administrator privileges...");
+                    // Ask user if they want to restart as admin
+                    Console.Write("   Would you like to restart as Administrator? (y/n): ");
+                    var response = Console.ReadLine()?.Trim().ToLowerInvariant();
                     
-                    // Attempt to restart as administrator
-                    if (TryRestartAsAdministrator(args))
+                    if (response == "y" || response == "yes")
                     {
-                        Logger.Info("Successfully launched elevated process. Exiting current instance.");
-                        return 0; // Success - elevated process will handle the work
+                        Console.WriteLine("   Attempting to restart with administrator privileges...");
+                        
+                        // Attempt to restart as administrator
+                        if (TryRestartAsAdministrator(args))
+                        {
+                            Logger.Info("Successfully launched elevated process. Exiting current instance.");
+                            return 0; // Success - elevated process will handle the work
+                        }
+                        else
+                        {
+                            Logger.Error("Failed to obtain administrator privileges. Cannot continue.");
+                            Console.WriteLine("   ❌ Failed to restart with administrator privileges.");
+                            Console.WriteLine("   Please manually run as Administrator or use sudo.");
+                            return 1; // Error - elevation failed
+                        }
                     }
                     else
                     {
-                        Logger.Error("Failed to obtain administrator privileges. Cannot continue.");
-                        Console.WriteLine("   ❌ Failed to restart with administrator privileges.");
-                        Console.WriteLine("   Please manually run as Administrator or use sudo.");
-                        return 1; // Error - elevation failed
+                        Logger.Error("User declined to restart as administrator. Cannot continue.");
+                        Console.WriteLine("   Operation cancelled. BootstrapMate requires administrator privileges.");
+                        return 1; // Error - user declined elevation
                     }
                 }
                 else
                 {
-                    Logger.Error("User declined to restart as administrator. Cannot continue.");
-                    Console.WriteLine("   Operation cancelled. BootstrapMate requires administrator privileges.");
-                    return 1; // Error - user declined elevation
+                    // In silent mode, just attempt to restart as administrator automatically
+                    if (TryRestartAsAdministrator(args))
+                    {
+                        Logger.Info("Successfully launched elevated process in silent mode. Exiting current instance.");
+                        return 0; // Success - elevated process will handle the work
+                    }
+                    else
+                    {
+                        Logger.Error("Failed to obtain administrator privileges in silent mode. Cannot continue.");
+                        return 1; // Error - elevation failed
+                    }
                 }
             }
             
             Logger.Debug("Running with administrator privileges");
-            Console.WriteLine("[+] Running with administrator privileges");
-            Console.WriteLine();
+            if (!silentMode)
+            {
+                Console.WriteLine("[+] Running with administrator privileges");
+                Console.WriteLine();
+            }
             
             return MainAsync(args).GetAwaiter().GetResult();
         }
         
         static async Task<int> MainAsync(string[] args)
         {
-            Logger.WriteHeader($"BootstrapMate for Windows v{Version}");
-            Console.WriteLine("MDM-agnostic bootstrapping tool for Windows");
-            Console.WriteLine("Windows Admins Open Source 2025");
+            // Check for silent mode flag
+            bool silentMode = args.Any(arg => arg.Equals("--silent", StringComparison.OrdinalIgnoreCase));
+            
+            if (!silentMode)
+            {
+                Logger.WriteHeader($"BootstrapMate for Windows v{Version}");
+                Console.WriteLine("MDM-agnostic bootstrapping tool for Windows");
+                Console.WriteLine("Windows Admins Open Source 2025");
+            }
             
             // Clean up old statuses (older than 24 hours) on startup
             try
@@ -206,26 +238,31 @@ namespace BootstrapMate
             
             if (args.Length == 0)
             {
-                Console.WriteLine("Usage:");
-                Console.WriteLine("  installapplications.exe --url <manifest-url>");
-                Console.WriteLine("  installapplications.exe --help");
-                Console.WriteLine("  installapplications.exe --version");
-                Console.WriteLine("  installapplications.exe --status");
-                Console.WriteLine("  installapplications.exe --clear-cache");
-                Console.WriteLine("  installapplications.exe --reset-chocolatey");
-                Console.WriteLine("  installapplications.exe --url <manifest-url> --force");
-                Console.WriteLine("  installapplications.exe --url <manifest-url> --verbose");
-                Console.WriteLine();
-                Console.WriteLine("Options:");
-                Console.WriteLine("  --url <url>     URL to the bootstrapmate.json manifest");
-                Console.WriteLine("  --force         Force re-download of all packages (ignore cache)");
-                Console.WriteLine("  --verbose       Show detailed logging output");
-                Console.WriteLine("  --help          Show this help message");
-                Console.WriteLine("  --version       Show version information");
-                Console.WriteLine("  --status        Show current installation status");
-                Console.WriteLine("  --clear-status  Clear all installation status data");
-                Console.WriteLine("  --clear-cache   Clear package cache (C:\\ProgramData\\ManagedBootstrap\\cache)");
-                Console.WriteLine("  --reset-chocolatey  Complete Chocolatey reset (removes corrupted lib folder)");
+                if (!silentMode)
+                {
+                    Console.WriteLine("Usage:");
+                    Console.WriteLine("  installapplications.exe --url <manifest-url>");
+                    Console.WriteLine("  installapplications.exe --help");
+                    Console.WriteLine("  installapplications.exe --version");
+                    Console.WriteLine("  installapplications.exe --status");
+                    Console.WriteLine("  installapplications.exe --clear-cache");
+                    Console.WriteLine("  installapplications.exe --reset-chocolatey");
+                    Console.WriteLine("  installapplications.exe --url <manifest-url> --force");
+                    Console.WriteLine("  installapplications.exe --url <manifest-url> --verbose");
+                    Console.WriteLine("  installapplications.exe --url <manifest-url> --silent");
+                    Console.WriteLine();
+                    Console.WriteLine("Options:");
+                    Console.WriteLine("  --url <url>     URL to the bootstrapmate.json manifest");
+                    Console.WriteLine("  --force         Force re-download of all packages (ignore cache)");
+                    Console.WriteLine("  --verbose       Show detailed logging output");
+                    Console.WriteLine("  --silent        Run completely silently (no console output)");
+                    Console.WriteLine("  --help          Show this help message");
+                    Console.WriteLine("  --version       Show version information");
+                    Console.WriteLine("  --status        Show current installation status");
+                    Console.WriteLine("  --clear-status  Clear all installation status data");
+                    Console.WriteLine("  --clear-cache   Clear package cache (C:\\ProgramData\\ManagedBootstrap\\cache)");
+                    Console.WriteLine("  --reset-chocolatey  Complete Chocolatey reset (removes corrupted lib folder)");
+                }
                 return 0;
             }
             
@@ -270,6 +307,10 @@ namespace BootstrapMate
 
                     case "--verbose":
                         // Verbose mode is already handled in Main()
+                        break;
+                        
+                    case "--silent":
+                        // Silent mode is already handled in Main()
                         break;
                         
                     case "--url":
