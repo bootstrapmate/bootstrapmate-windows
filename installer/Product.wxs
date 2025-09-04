@@ -54,13 +54,14 @@
     </Component>
 
     <!-- Custom Properties for Bootstrap URL -->
-    <Property Id="BOOTSTRAP_URL" Value="https://example.com/bootstrap.json" />
-    <Property Id="RUN_BOOTSTRAP" Value="0" />
+    <Property Id="BOOTSTRAP_URL" Value="https://cimian.example.com/bootstrap/management.json" />
+    <Property Id="RUN_BOOTSTRAP" Value="1" />
     
-    <!-- Custom Action: Run BootstrapMate after installation if BOOTSTRAP_URL is provided -->
+    <!-- Custom Action: Run BootstrapMate after installation -->
+    <!-- Use PowerShell with WindowStyle Hidden to ensure no visible windows -->
     <CustomAction Id="RunBootstrapMate" 
                   Directory="INSTALLDIR" 
-                  ExeCommand="&quot;[INSTALLDIR]installapplications.exe&quot; --url &quot;[BOOTSTRAP_URL]&quot;"
+                  ExeCommand="powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -Command &quot;&amp; '[INSTALLDIR]installapplications.exe' --url '[BOOTSTRAP_URL]' --silent&quot;"
                   Execute="deferred"
                   Impersonate="no"
                   Return="asyncNoWait" />
