@@ -405,16 +405,27 @@ function Update-Version {
         throw "Program.cs not found at: $programCsPath"
     }
     
-    # Generate MSI-compliant version format
-    # MSI requires: major < 256, minor < 256, build < 65536
+    # Generate full YYYY.MM.DD.HHMM version format for Intune compatibility
+    # Note: MSI ProductVersion will use a compatible subset for internal MSI requirements
     $now = Get-Date
-    $major = $now.Year - 2000  # e.g., 25 for 2025
-    $minor = $now.Month        # e.g., 9 for September  
-    $build = $now.Day          # e.g., 2 for 2nd day
-    $revision = [int]($now.ToString("HHmm"))  # e.g., 2141 for 21:41
+    $year = $now.Year          # e.g., 2025
+    $month = $now.ToString("MM")     # e.g., 09 for September (zero-padded)  
+    $day = $now.ToString("dd")       # e.g., 02 for 2nd day (zero-padded)
+    $revision = $now.ToString("HHmm") # e.g., 2141 for 21:41
     
-    $newVersion = "$major.$minor.$build.$revision"
-    Write-Log "Updating version to: $newVersion (MSI-compliant format)" "INFO"
+    $newVersion = "$year.$month.$day.$revision"
+    Write-Log "Updating version to: $newVersion (YYYY.MM.DD.HHMM format for Intune compatibility)" "INFO"
+    
+    # Create MSI-compatible version (major.minor.build < 65536)
+    # Convert YYYY.MM.DD.HHMM to YY.MM.DD.HHMM for MSI ProductVersion
+    $now = Get-Date
+    $msiMajor = $now.Year - 2000  # e.g., 25 for 2025
+    $msiMinor = [int]$now.ToString("MM")        # e.g., 9 for September  
+    $msiBuild = [int]$now.ToString("dd")        # e.g., 2 for 2nd day
+    $msiRevision = [int]$now.ToString("HHmm")   # e.g., 2141 for 21:41
+    $msiVersion = "$msiMajor.$msiMinor.$msiBuild.$msiRevision"
+    
+    Write-Log "MSI ProductVersion: $msiVersion (MSI-compliant format)" "INFO"
     
     # Read the current file content
     $content = Get-Content $programCsPath -Raw
@@ -427,7 +438,10 @@ function Update-Version {
         $updatedContent = $content -replace $pattern, $replacement
         Set-Content -Path $programCsPath -Value $updatedContent -NoNewline
         Write-Log "Version updated successfully in Program.cs" "SUCCESS"
-        return $newVersion
+        return @{
+            FullVersion = $newVersion      # YYYY.MM.DD.HHMM for Intune detection
+            MsiVersion = $msiVersion       # YY.MM.DD.HHMM for MSI ProductVersion
+        }
     } else {
         Write-Log "Could not find version pattern in Program.cs" "WARN"
         return $null
@@ -456,7 +470,7 @@ function Build-MSI {
         "--configuration", "Release",
         "--verbosity", "normal",
         "-p:Platform=$Arch",
-        "-p:ProductVersion=$Version"
+        "-p:ProductVersion=$($versionInfo.MsiVersion)"
     )
     
     Write-Log "Building MSI: dotnet $($buildArgs -join ' ')" "INFO"
@@ -601,9 +615,10 @@ try {
     }
     
     # Update version first
-    $currentVersion = Update-Version
-    if ($currentVersion) {
-        Write-Log "Building with version: $currentVersion" "INFO"
+    $versionInfo = Update-Version
+    if ($versionInfo -and $versionInfo.FullVersion) {
+        Write-Log "Building with version: $($versionInfo.FullVersion)" "INFO"
+        Write-Log "MSI ProductVersion: $($versionInfo.MsiVersion)" "INFO"
     }
     
     # Prerequisites check
@@ -731,7 +746,7 @@ try {
             foreach ($result in $buildResults) {
                 if ($result.Success) {
                     Write-Log "" "INFO"
-                    $msiResult = Build-MSI -Arch $result.Architecture -Version $currentVersion -SigningCert $signingCert
+                    $msiResult = Build-MSI -Arch $result.Architecture -Version $versionInfo.MsiVersion -SigningCert $signingCert
                     $msiResults += $msiResult
                     
                     # Create .intunewin if MSI was successful
