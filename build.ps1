@@ -444,7 +444,11 @@ function Update-Version {
         }
     } else {
         Write-Log "Could not find version pattern in Program.cs" "WARN"
-        return $null
+        Write-Log "C# code uses dynamic version generation, continuing with MSI version..." "INFO"
+        return @{
+            FullVersion = $newVersion      # YYYY.MM.DD.HHMM for Intune detection
+            MsiVersion = $msiVersion       # YY.MM.DD.HHMM for MSI ProductVersion
+        }
     }
 }
 
