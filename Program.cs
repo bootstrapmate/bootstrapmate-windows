@@ -19,8 +19,8 @@ namespace BootstrapMate
         private static string LogDirectory = @"C:\ProgramData\ManagedBootstrap\logs";
         private static string CacheDirectory = @"C:\ProgramData\ManagedBootstrap\cache";
         
-        // Version in YYYY.MM.DD.HHMM format
-        private static readonly string Version = "2025.09.03.1100";
+        // Version in YYYY.MM.DD.HHMM format - dynamically generated at build time
+        private static readonly string Version = GenerateVersion();
 
         static string GetCacheDirectory()
         {
@@ -39,6 +39,13 @@ namespace BootstrapMate
                 Directory.CreateDirectory(fallbackDir);
                 return fallbackDir;
             }
+        }
+
+        static string GenerateVersion()
+        {
+            // Generate version in YYYY.MM.DD.HHMM format based on current build time
+            var now = DateTime.Now;
+            return $"{now.Year:D4}.{now.Month:D2}.{now.Day:D2}.{now.Hour:D2}{now.Minute:D2}";
         }
 
         static bool IsRunningAsAdministrator()
