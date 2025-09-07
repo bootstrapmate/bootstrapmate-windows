@@ -17,6 +17,7 @@ namespace BootstrapMate
         private static string? LogFile;
         private static bool _verboseConsole = false;
         private static bool _silentMode = false;
+        private static DateTime _sessionStartTime;
         
         public static void Initialize(string logDirectory, string version = "Unknown", bool verboseConsole = false, bool silentMode = false)
         {
@@ -24,6 +25,7 @@ namespace BootstrapMate
             {
                 _verboseConsole = verboseConsole;
                 _silentMode = silentMode;
+                _sessionStartTime = DateTime.Now;
                 
                 // Ensure log directory exists
                 if (!Directory.Exists(logDirectory))
@@ -36,6 +38,7 @@ namespace BootstrapMate
                 // Write session header to log file
                 WriteToFile("=== BootstrapMate Session Started ===");
                 WriteToFile($"Version: {version}");
+                WriteToFile($"Session Start Time: {_sessionStartTime:yyyy-MM-dd HH:mm:ss.fff}");
                 WriteToFile($"Process ID: {Environment.ProcessId}");
                 WriteToFile($"User: {Environment.UserName}");
                 WriteToFile($"Machine: {Environment.MachineName}");
@@ -153,10 +156,12 @@ namespace BootstrapMate
         // User-facing output methods that write to both log file and console (unless silent)
         public static void WriteHeader(string title)
         {
-            WriteToFile($"=== {title} ===");
+            var timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+            WriteToFile($"=== {title} === (Started: {timestamp})");
             if (_silentMode) return;
             Console.WriteLine();
             Console.WriteLine($"══ {title} ══");
+            Console.WriteLine($"Started: {timestamp}");
         }
 
         public static void WriteSection(string section)
@@ -212,10 +217,14 @@ namespace BootstrapMate
 
         public static void WriteCompletion(string message)
         {
-            WriteToFile($"[COMPLETION] {message}");
+            var timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+            var duration = DateTime.Now - _sessionStartTime;
+            WriteToFile($"[COMPLETION] {message} (Completed: {timestamp}, Total Duration: {duration.TotalSeconds:F1}s)");
             if (_silentMode) return;
             Console.WriteLine();
             Console.WriteLine($"[+] {message}");
+            Console.WriteLine($"Completed: {timestamp}");
+            Console.WriteLine($"Total Duration: {duration.TotalMinutes:F1} minutes ({duration.TotalSeconds:F1} seconds)");
             Console.WriteLine();
         }
 
@@ -223,18 +232,20 @@ namespace BootstrapMate
         public static void LogOperation(string operation, Action action)
         {
             var startTime = DateTime.Now;
-            Debug($"Starting operation: {operation}");
+            Debug($"Starting operation: {operation} at {startTime:yyyy-MM-dd HH:mm:ss.fff}");
             
             try
             {
                 action();
                 var duration = DateTime.Now - startTime;
-                Debug($"Completed operation: {operation} (took {duration.TotalSeconds:F1}s)");
+                var endTime = DateTime.Now;
+                Debug($"Completed operation: {operation} at {endTime:yyyy-MM-dd HH:mm:ss.fff} (took {duration.TotalSeconds:F1}s)");
             }
             catch (Exception ex)
             {
                 var duration = DateTime.Now - startTime;
-                Error($"Failed operation: {operation} after {duration.TotalSeconds:F1}s - {ex.Message}");
+                var endTime = DateTime.Now;
+                Error($"Failed operation: {operation} at {endTime:yyyy-MM-dd HH:mm:ss.fff} after {duration.TotalSeconds:F1}s - {ex.Message}");
                 throw;
             }
         }
@@ -243,6 +254,22 @@ namespace BootstrapMate
         public static string? GetLogFilePath()
         {
             return LogFile;
+        }
+
+        // Get the current session duration
+        public static TimeSpan GetSessionDuration()
+        {
+            return DateTime.Now - _sessionStartTime;
+        }
+
+        // Write session summary with total duration
+        public static void WriteSessionSummary()
+        {
+            var duration = GetSessionDuration();
+            var timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+            WriteToFile($"=== BootstrapMate Session Ended === (Duration: {duration.TotalSeconds:F1}s)");
+            WriteToFile($"Session End Time: {timestamp}");
+            WriteToFile($"Total Session Duration: {duration.TotalMinutes:F2} minutes");
         }
     }
 }

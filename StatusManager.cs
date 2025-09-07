@@ -38,8 +38,8 @@ namespace BootstrapMate
 
     public static class StatusManager
     {
-        private const string BASE_REGISTRY_PATH = @"SOFTWARE\BootstrapMate\Status";
-        private const string VERSION_REGISTRY_PATH = @"SOFTWARE\BootstrapMate";
+        private const string BASE_REGISTRY_PATH = @"SOFTWARE\Cimian\BootstrapMate\Status";
+        private const string VERSION_REGISTRY_PATH = @"SOFTWARE\Cimian\BootstrapMate";
         private const string STATUS_FILE_PATH = @"C:\ProgramData\BootstrapMate\status.json";
         
         private static string _currentRunId = Guid.NewGuid().ToString();

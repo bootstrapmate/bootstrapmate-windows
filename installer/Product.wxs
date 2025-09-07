@@ -7,6 +7,9 @@
   <?ifndef ProductVersion?>
     <?define ProductVersion = "0.0.0"?>
   <?endif?>
+  <?ifndef CimianToolsVersion?>
+    <?define CimianToolsVersion = "$(var.ProductVersion)"?>
+  <?endif?>
 
   <!-- Package Definition -->
   <Package Name="BootstrapMate"
@@ -18,6 +21,9 @@
            Compressed="yes"
            Scope="perMachine">
 
+    <!-- Ensure silent installation by default -->
+    <Property Id="MSIUSEREALADMINDETECTION" Value="1" />
+    
     <!-- Major Upgrade Settings -->
     <MajorUpgrade AllowSameVersionUpgrades="no" 
                   AllowDowngrades="no"
@@ -40,12 +46,14 @@
       <File Id="BootstrapMateExe" Source="$(var.BIN_DIR)\installapplications.exe" />
     </Component>
 
-    <!-- Registry entries for installation tracking -->
+    <!-- Registry entries for installation tracking AND detection -->
     <Component Id="RegistryEntries" Directory="INSTALLDIR" Guid="E5F6A7B8-C9D0-1234-EF56-789012345ABC">
       <RegistryValue Root="HKLM" Key="SOFTWARE\BootstrapMate" Name="InstallPath" Value="[INSTALLDIR]" Type="string" />
       <RegistryValue Root="HKLM" Key="SOFTWARE\BootstrapMate" Name="Version" Value="$(var.ProductVersion)" Type="string" />
       <RegistryValue Root="HKLM" Key="SOFTWARE\BootstrapMate" Name="InstallDate" Value="[Date]" Type="string" />
       <RegistryValue Root="HKLM" Key="SOFTWARE\BootstrapMate" Name="Architecture" Value="[ProcessorArchitecture]" Type="string" />
+      <!-- Detection key for Cimian version - set immediately by MSI (no shell execution) -->
+      <RegistryValue Root="HKLM" Key="SOFTWARE\BootstrapMate\Cimian" Name="Version" Value="$(var.CimianToolsVersion)" Type="string" />
     </Component>
 
     <!-- Environment Variable Component -->
@@ -57,19 +65,28 @@
     <Property Id="BOOTSTRAP_URL" Value="https://cimian.example.com/bootstrap/management.json" />
     <Property Id="RUN_BOOTSTRAP" Value="1" />
     
-    <!-- Custom Action: Run BootstrapMate after installation -->
-    <!-- Use PowerShell with WindowStyle Hidden to ensure no visible windows -->
+    <!-- Custom Action: Run BootstrapMate executable with proper MSI handling -->
+    <CustomAction Id="SetBootstrapProperties" 
+                  Property="RunBootstrapMate"
+                  Value="-ExecutionPolicy Bypass -WindowStyle Hidden -Command &quot;Start-Process -FilePath '[INSTALLDIR]installapplications.exe' -ArgumentList '--url', '[BOOTSTRAP_URL]', '--silent' -WindowStyle Hidden -Wait&quot;" />
+    
     <CustomAction Id="RunBootstrapMate" 
                   Directory="INSTALLDIR" 
-                  ExeCommand="powershell.exe -WindowStyle Hidden -ExecutionPolicy Bypass -Command &quot;&amp; '[INSTALLDIR]installapplications.exe' --url '[BOOTSTRAP_URL]' --silent&quot;"
+                  ExeCommand="powershell.exe [RunBootstrapMate]"
                   Execute="deferred"
                   Impersonate="no"
-                  Return="asyncNoWait" />
+                  Return="asyncNoWait"
+                  HideTarget="yes" />
 
     <!-- Installation Sequences -->
     <InstallExecuteSequence>
+      <!-- Registry keys are set immediately by RegistryEntries component -->
+      <!-- Set properties for deferred custom action -->
+      <Custom Action="SetBootstrapProperties" Before="RunBootstrapMate" 
+              Condition="BOOTSTRAP_URL &lt;&gt; &quot;&quot; AND RUN_BOOTSTRAP = &quot;1&quot;" />
+      <!-- Bootstrap runs after all files are installed -->
       <Custom Action="RunBootstrapMate" After="InstallFiles" 
-              Condition="NOT Installed AND BOOTSTRAP_URL &lt;&gt; &quot;&quot; AND RUN_BOOTSTRAP = &quot;1&quot;" />
+              Condition="BOOTSTRAP_URL &lt;&gt; &quot;&quot; AND RUN_BOOTSTRAP = &quot;1&quot;" />
     </InstallExecuteSequence>
 
     <!-- Feature Definition -->

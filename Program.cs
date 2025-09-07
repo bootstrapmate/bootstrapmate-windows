@@ -66,13 +66,23 @@ namespace BootstrapMate
         {
             try
             {
+                // Check if we're in silent mode - if so, don't try to restart with GUI
+                bool silentMode = args.Any(arg => arg.Equals("--silent", StringComparison.OrdinalIgnoreCase));
+                
+                if (silentMode)
+                {
+                    Logger.Error("Running in silent mode but not elevated - cannot show UAC prompt");
+                    return false;
+                }
+                
                 var startInfo = new ProcessStartInfo
                 {
                     FileName = Environment.ProcessPath ?? Path.Combine(AppContext.BaseDirectory, "installapplications.exe"),
                     Arguments = string.Join(" ", args),
                     UseShellExecute = true,
                     Verb = "runas",  // Request elevation
-                    CreateNoWindow = false
+                    CreateNoWindow = true,  // Don't create console window
+                    WindowStyle = ProcessWindowStyle.Hidden
                 };
 
                 Logger.Info("BootstrapMate requires administrator privileges. Requesting elevation...");

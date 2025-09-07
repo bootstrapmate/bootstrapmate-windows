@@ -18,7 +18,8 @@ param(
     [switch]$Clean,
     [switch]$Test,
     [switch]$AllowUnsigned,  # Explicit flag to allow unsigned builds for development only
-    [switch]$SkipMSI         # Skip MSI and .intunewin creation (executables only)
+    [switch]$SkipMSI,        # Skip MSI and .intunewin creation (executables only)
+    [string]$CimianToolsVersion  # Version to embed in detection registry key
 )
 
 $ErrorActionPreference = "Stop"
@@ -457,7 +458,8 @@ function Build-MSI {
     param(
         [string]$Arch,
         [string]$Version,
-        [System.Security.Cryptography.X509Certificates.X509Certificate2]$SigningCert = $null
+        [System.Security.Cryptography.X509Certificates.X509Certificate2]$SigningCert = $null,
+        [string]$CimianVersion = $null  # Optional CimianTools version for detection
     )
     
     Write-Log "Building MSI for $Arch architecture..." "INFO"
@@ -476,6 +478,12 @@ function Build-MSI {
         "-p:Platform=$Arch",
         "-p:ProductVersion=$($versionInfo.MsiVersion)"
     )
+    
+    # Add CimianTools version if provided
+    if ($CimianVersion) {
+        $buildArgs += "-p:CimianToolsVersion=$CimianVersion"
+        Write-Log "Including CimianTools version for detection: $CimianVersion" "INFO"
+    }
     
     Write-Log "Building MSI: dotnet $($buildArgs -join ' ')" "INFO"
     
@@ -750,7 +758,7 @@ try {
             foreach ($result in $buildResults) {
                 if ($result.Success) {
                     Write-Log "" "INFO"
-                    $msiResult = Build-MSI -Arch $result.Architecture -Version $versionInfo.MsiVersion -SigningCert $signingCert
+                    $msiResult = Build-MSI -Arch $result.Architecture -Version $versionInfo.MsiVersion -SigningCert $signingCert -CimianVersion $CimianToolsVersion
                     $msiResults += $msiResult
                     
                     # Create .intunewin if MSI was successful
