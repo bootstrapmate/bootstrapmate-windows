@@ -64,9 +64,10 @@
     <Property Id="RUN_BOOTSTRAP" Value="1" />
     
     <!-- Custom Action: Run BootstrapMate executable with proper MSI handling -->
+    <!-- Only run if bootstrap URL is provided and we want to run bootstrap -->
     <CustomAction Id="SetBootstrapProperties" 
                   Property="RunBootstrapMate"
-                  Value="-ExecutionPolicy Bypass -WindowStyle Hidden -Command &quot;Start-Process -FilePath '[INSTALLDIR]installapplications.exe' -ArgumentList '--url', '[BOOTSTRAP_URL]', '--silent' -WindowStyle Hidden -Wait&quot;" />
+                  Value="-WindowStyle Hidden -Command &quot;if (-not (Get-Process -Name installapplications -EA 0)) { Start-Process '[INSTALLDIR]installapplications.exe' -ArgumentList '--url','[BOOTSTRAP_URL]','--silent' -WindowStyle Hidden }&quot;" />
     
     <CustomAction Id="RunBootstrapMate" 
                   Directory="INSTALLDIR" 

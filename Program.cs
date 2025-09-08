@@ -1091,6 +1091,101 @@ namespace BootstrapMate
             }
         }
         
+        static async Task EnsureLatestChocolatey()
+        {
+            Logger.Debug("Ensuring Chocolatey is up to date...");
+            
+            string chocoPath = FindChocolateyExecutable();
+            
+            try
+            {
+                // First, clear Chocolatey cache to prevent old package issues
+                await ClearChocolateyCache(chocoPath);
+                
+                // Then upgrade Chocolatey to latest version
+                await UpgradeChocolatey(chocoPath);
+            }
+            catch (Exception ex)
+            {
+                Logger.Warning($"Could not update Chocolatey: {ex.Message}");
+                // Don't fail the entire process if Chocolatey update fails
+            }
+        }
+        
+        static async Task ClearChocolateyCache(string chocoPath)
+        {
+            Logger.Debug("Clearing Chocolatey cache...");
+            Logger.WriteSubProgress("Clearing Chocolatey cache", "Removing cached packages");
+            
+            try
+            {
+                var cacheStartInfo = new ProcessStartInfo
+                {
+                    FileName = chocoPath,
+                    Arguments = "cache -r",  // Remove all cached packages
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true
+                };
+                
+                using var cacheProcess = Process.Start(cacheStartInfo);
+                if (cacheProcess != null)
+                {
+                    await cacheProcess.WaitForExitAsync();
+                    if (cacheProcess.ExitCode == 0)
+                    {
+                        Logger.Debug("Chocolatey cache cleared successfully");
+                    }
+                    else
+                    {
+                        Logger.Warning($"Chocolatey cache clear returned exit code: {cacheProcess.ExitCode}");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Warning($"Could not clear Chocolatey cache: {ex.Message}");
+            }
+        }
+        
+        static async Task UpgradeChocolatey(string chocoPath)
+        {
+            Logger.Debug("Upgrading Chocolatey to latest version...");
+            Logger.WriteSubProgress("Upgrading Chocolatey", "Ensuring latest version");
+            
+            try
+            {
+                var upgradeStartInfo = new ProcessStartInfo
+                {
+                    FileName = chocoPath,
+                    Arguments = "upgrade chocolatey --confirm",  // Upgrade to latest version
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true
+                };
+                
+                using var upgradeProcess = Process.Start(upgradeStartInfo);
+                if (upgradeProcess != null)
+                {
+                    await upgradeProcess.WaitForExitAsync();
+                    if (upgradeProcess.ExitCode == 0)
+                    {
+                        Logger.Debug("Chocolatey upgraded successfully");
+                    }
+                    else
+                    {
+                        Logger.Warning($"Chocolatey upgrade returned exit code: {upgradeProcess.ExitCode}");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Warning($"Could not upgrade Chocolatey: {ex.Message}");
+            }
+        }
+        
         static async Task<bool> VerifyChocolateyInstallation(string chocoPath)
         {
             try
@@ -1246,6 +1341,9 @@ namespace BootstrapMate
             
             // First check if chocolatey is installed, install it if missing
             await EnsureChocolateyInstalled();
+            
+            // Ensure we have the latest Chocolatey version and clear cache
+            await EnsureLatestChocolatey();
             
             // Extract package details from the .nupkg file by reading the .nuspec
             string packageDir = Path.GetDirectoryName(nupkgPath) ?? Path.GetTempPath();
