@@ -52,8 +52,6 @@
       <RegistryValue Root="HKLM" Key="SOFTWARE\BootstrapMate" Name="Version" Value="$(var.ProductVersion)" Type="string" />
       <RegistryValue Root="HKLM" Key="SOFTWARE\BootstrapMate" Name="InstallDate" Value="[Date]" Type="string" />
       <RegistryValue Root="HKLM" Key="SOFTWARE\BootstrapMate" Name="Architecture" Value="[ProcessorArchitecture]" Type="string" />
-      <!-- Detection key for Cimian version - set immediately by MSI (no shell execution) -->
-      <RegistryValue Root="HKLM" Key="SOFTWARE\BootstrapMate\Cimian" Name="Version" Value="$(var.CimianToolsVersion)" Type="string" />
     </Component>
 
     <!-- Environment Variable Component -->
@@ -61,8 +59,8 @@
       <Environment Id="UpdatePath" Name="PATH" Value="[INSTALLDIR]" Permanent="no" Part="last" Action="set" Separator=";" System="yes" />
     </Component>
 
-    <!-- Custom Properties for Bootstrap URL -->
-    <Property Id="BOOTSTRAP_URL" Value="https://cimian.example.com/bootstrap/management.json" />
+    <!-- Custom Properties for Bootstrap URL - Set via build parameter -->
+    <Property Id="BOOTSTRAP_URL" Value="$(var.BootstrapUrl)" />
     <Property Id="RUN_BOOTSTRAP" Value="1" />
     
     <!-- Custom Action: Run BootstrapMate executable with proper MSI handling -->

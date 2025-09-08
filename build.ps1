@@ -439,17 +439,14 @@ function Update-Version {
         $updatedContent = $content -replace $pattern, $replacement
         Set-Content -Path $programCsPath -Value $updatedContent -NoNewline
         Write-Log "Version updated successfully in Program.cs" "SUCCESS"
-        return @{
-            FullVersion = $newVersion      # YYYY.MM.DD.HHMM for Intune detection
-            MsiVersion = $msiVersion       # YY.MM.DD.HHMM for MSI ProductVersion
-        }
     } else {
-        Write-Log "Could not find version pattern in Program.cs" "WARN"
-        Write-Log "C# code uses dynamic version generation, continuing with MSI version..." "INFO"
-        return @{
-            FullVersion = $newVersion      # YYYY.MM.DD.HHMM for Intune detection
-            MsiVersion = $msiVersion       # YY.MM.DD.HHMM for MSI ProductVersion
-        }
+        Write-Log "C# code uses dynamic version generation (as designed)" "INFO"
+    }
+    
+    # Return version information regardless of whether static version was found
+    return @{
+        FullVersion = $newVersion      # YYYY.MM.DD.HHMM for Intune detection
+        MsiVersion = $msiVersion       # YY.MM.DD.HHMM for MSI ProductVersion
     }
 }
 
@@ -471,12 +468,22 @@ function Build-MSI {
         return @{ Success = $false; Architecture = $Arch }
     }
     
+    # Get bootstrap URL from environment - REQUIRED
+    $bootstrapUrl = $env:BOOTSTRAP_MANIFEST_URL
+    if (-not $bootstrapUrl) {
+        Write-Log "CRITICAL ERROR: BOOTSTRAP_MANIFEST_URL environment variable not set!" "ERROR"
+        Write-Log "Please set this in your .env file or system environment variables" "ERROR"
+        Write-Log "Example: BOOTSTRAP_MANIFEST_URL=https://your-domain.com/bootstrap/management.json" "ERROR"
+        throw "BOOTSTRAP_MANIFEST_URL environment variable is required for MSI build"
+    }
+    
     $buildArgs = @(
         "build", $projectPath,
         "--configuration", "Release",
         "--verbosity", "normal",
         "-p:Platform=$Arch",
-        "-p:ProductVersion=$($versionInfo.MsiVersion)"
+        "-p:ProductVersion=$($versionInfo.MsiVersion)",
+        "-p:BootstrapUrl=$bootstrapUrl"
     )
     
     # Add CimianTools version if provided
@@ -617,13 +624,16 @@ try {
     # Load environment variables first
     Import-EnvironmentVariables
 
-    # Enterprise Certificate Configuration - Use environment variable with fallback
+    # Enterprise Certificate Configuration - REQUIRED environment variable
     $Global:EnterpriseCertCN = $env:ENTERPRISE_CERT_CN
     if (-not $Global:EnterpriseCertCN) {
-        Write-Log "WARNING: ENTERPRISE_CERT_CN environment variable not set!" "WARN"
-        Write-Log "Please set this in your .env file or system environment variables" "WARN"
-        Write-Log "Example: ENTERPRISE_CERT_CN=Your Organization Code Signing Certificate" "WARN"
-        $Global:EnterpriseCertCN = 'ExampleOrgU Intune Windows Enterprise Certificate'  # Temporary fallback for existing deployments
+        Write-Log "CRITICAL ERROR: ENTERPRISE_CERT_CN environment variable not set!" "ERROR"
+        Write-Log "Please set this in your .env file or system environment variables" "ERROR"
+        Write-Log "Example: ENTERPRISE_CERT_CN=Your Organization Code Signing Certificate" "ERROR"
+        Write-Log "" "ERROR"
+        Write-Log "Create a .env file with:" "ERROR"
+        Write-Log "ENTERPRISE_CERT_CN=Your Organization Code Signing Certificate" "ERROR"
+        throw "ENTERPRISE_CERT_CN environment variable is required for certificate discovery"
     }
     
     # Update version first
