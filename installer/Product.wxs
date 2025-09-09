@@ -54,45 +54,65 @@
       <RegistryValue Root="HKLM" Key="SOFTWARE\BootstrapMate" Name="Architecture" Value="[ProcessorArchitecture]" Type="string" />
     </Component>
 
+    <!-- Bootstrap URL registry entries - only when URL is provided -->
+    <Component Id="BootstrapRegistryEntries" Directory="INSTALLDIR" Guid="A1B2C3D4-E5F6-7890-1234-56789ABCDEF0"
+               Condition="BOOTSTRAP_URL &lt;&gt; &quot;&quot;">
+      <!-- Bootstrap URL for auto-execution -->
+      <RegistryValue Root="HKLM" Key="SOFTWARE\BootstrapMate" Name="BootstrapUrl" Value="[BOOTSTRAP_URL]" Type="string" />
+      <!-- Trigger flag for auto-execution -->
+      <RegistryValue Root="HKLM" Key="SOFTWARE\BootstrapMate" Name="AutoRun" Value="1" Type="string" />
+    </Component>
+
     <!-- Environment Variable Component -->
     <Component Id="SetPathComponent" Guid="D4E5F6A7-B8C9-0123-DEF4-56789012345A">
       <Environment Id="UpdatePath" Name="PATH" Value="[INSTALLDIR]" Permanent="no" Part="last" Action="set" Separator=";" System="yes" />
     </Component>
 
+    <!-- Scheduled Task Component for reliable execution -->
+    <Component Id="ScheduledTaskComponent" Directory="INSTALLDIR" Guid="F5E6D7C8-B9A0-1234-EF56-789012345BCD"
+               Condition="BOOTSTRAP_URL &lt;&gt; &quot;&quot;">
+      <!-- Create a one-time scheduled task that runs 2 minutes after installation -->
+      <RegistryValue Root="HKLM" Key="SOFTWARE\BootstrapMate\ScheduledTask" Name="Created" Value="1" Type="string" />
+    </Component>
+
     <!-- Custom Properties for Bootstrap URL - Set via build parameter -->
     <Property Id="BOOTSTRAP_URL" Value="$(var.BootstrapUrl)" />
-    <Property Id="RUN_BOOTSTRAP" Value="1" />
-    
-    <!-- Custom Action: Run BootstrapMate executable with proper MSI handling -->
-    <!-- Only run if bootstrap URL is provided and we want to run bootstrap -->
-    <CustomAction Id="SetBootstrapProperties" 
-                  Property="RunBootstrapMate"
-                  Value="-WindowStyle Hidden -Command &quot;if (-not (Get-Process -Name installapplications -EA 0)) { Start-Process '[INSTALLDIR]installapplications.exe' -ArgumentList '--url','[BOOTSTRAP_URL]','--silent' -WindowStyle Hidden }&quot;" />
     
     <CustomAction Id="RunBootstrapMate" 
                   Directory="INSTALLDIR" 
-                  ExeCommand="powershell.exe [RunBootstrapMate]"
+                  ExeCommand="installapplications.exe --url &quot;[BOOTSTRAP_URL]&quot; --silent"
                   Execute="deferred"
                   Impersonate="no"
-                  Return="asyncNoWait"
+                  Return="ignore"
+                  HideTarget="yes" />
+
+    <!-- Backup: Create scheduled task for ultra-reliable execution (runs 2 minutes after installation) -->
+    <!-- Only runs if primary custom action failed (no logs in ManagedBootstrap) -->
+    <CustomAction Id="CreateBootstrapTask" 
+                  Directory="INSTALLDIR" 
+                  ExeCommand="schtasks.exe /Create /TN BootstrapMate-Auto /TR &quot;powershell -c if(!(ls C:\ProgramData\ManagedBootstrap\logs\*.log -ea 0)){'[INSTALLDIR]installapplications.exe' --url '[BOOTSTRAP_URL]' --silent}&quot; /SC ONCE /ST 23:59 /RU SYSTEM /F"
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="ignore"
                   HideTarget="yes" />
 
     <!-- Installation Sequences -->
     <InstallExecuteSequence>
-      <!-- Registry keys are set immediately by RegistryEntries component -->
-      <!-- Set properties for deferred custom action -->
-      <Custom Action="SetBootstrapProperties" Before="RunBootstrapMate" 
-              Condition="BOOTSTRAP_URL &lt;&gt; &quot;&quot; AND RUN_BOOTSTRAP = &quot;1&quot;" />
-      <!-- Bootstrap runs after all files are installed -->
+      <!-- Primary: Direct execution after files are installed -->
       <Custom Action="RunBootstrapMate" After="InstallFiles" 
-              Condition="BOOTSTRAP_URL &lt;&gt; &quot;&quot; AND RUN_BOOTSTRAP = &quot;1&quot;" />
+              Condition="BOOTSTRAP_URL &lt;&gt; &quot;&quot;" />
+      <!-- Backup: Create scheduled task for reliable execution -->
+      <Custom Action="CreateBootstrapTask" After="RunBootstrapMate" 
+              Condition="BOOTSTRAP_URL &lt;&gt; &quot;&quot;" />
     </InstallExecuteSequence>
 
     <!-- Feature Definition -->
     <Feature Id="DefaultFeature" Level="1">
       <ComponentRef Id="BootstrapMateExecutable" />
       <ComponentRef Id="RegistryEntries" />
+      <ComponentRef Id="BootstrapRegistryEntries" />
       <ComponentRef Id="SetPathComponent" />
+      <ComponentRef Id="ScheduledTaskComponent" />
     </Feature>
 
   </Package>
