@@ -277,7 +277,7 @@ namespace BootstrapMate
                     Console.WriteLine("  --version       Show version information");
                     Console.WriteLine("  --status        Show current installation status");
                     Console.WriteLine("  --clear-status  Clear all installation status data");
-                    Console.WriteLine("  --clear-cache   Clear package cache (C:\\ProgramData\\ManagedBootstrap\\cache)");
+                    Console.WriteLine("  --clear-cache   Aggressively clear all caches (BootstrapMate + Chocolatey)");
                     Console.WriteLine("  --reset-chocolatey  Complete Chocolatey reset (removes corrupted lib folder)");
                 }
                 return 0;
@@ -362,9 +362,9 @@ namespace BootstrapMate
                 // Clear cache if force download is requested
                 if (forceDownload)
                 {
-                    Logger.Debug("Force download requested - clearing package cache");
-                    Logger.Info("Force download requested - clearing package cache");
-                    ClearPackageCache();
+                    Logger.Debug("Force download requested - aggressively clearing all caches");
+                    Logger.Info("Force download requested - aggressively clearing all caches");
+                    ClearAllCachesAggressive();
                 }
 
                 // Initialize status tracking
@@ -442,15 +442,15 @@ namespace BootstrapMate
                 // Write successful completion to registry for Intune detection
                 StatusManager.WriteSuccessfulCompletionRegistry();
                 
-                // Auto-cleanup package cache after successful completion
+                // Auto-cleanup all caches aggressively after successful completion
                 try
                 {
-                    ClearPackageCache();
-                    Logger.Info("Auto-cleanup: Package cache cleared after successful completion");
+                    ClearAllCachesAggressive();
+                    Logger.Info("Auto-cleanup: All caches cleared aggressively after successful completion");
                 }
                 catch (Exception cacheEx)
                 {
-                    Logger.Warning($"Auto-cleanup: Could not clear package cache: {cacheEx.Message}");
+                    Logger.Warning($"Auto-cleanup: Could not clear caches aggressively: {cacheEx.Message}");
                     // Don't fail the entire process if cache cleanup fails
                 }
                 
@@ -1091,101 +1091,6 @@ namespace BootstrapMate
             }
         }
         
-        static async Task EnsureLatestChocolatey()
-        {
-            Logger.Debug("Ensuring Chocolatey is up to date...");
-            
-            string chocoPath = FindChocolateyExecutable();
-            
-            try
-            {
-                // First, clear Chocolatey cache to prevent old package issues
-                await ClearChocolateyCache(chocoPath);
-                
-                // Then upgrade Chocolatey to latest version
-                await UpgradeChocolatey(chocoPath);
-            }
-            catch (Exception ex)
-            {
-                Logger.Warning($"Could not update Chocolatey: {ex.Message}");
-                // Don't fail the entire process if Chocolatey update fails
-            }
-        }
-        
-        static async Task ClearChocolateyCache(string chocoPath)
-        {
-            Logger.Debug("Clearing Chocolatey cache...");
-            Logger.WriteSubProgress("Clearing Chocolatey cache", "Removing cached packages");
-            
-            try
-            {
-                var cacheStartInfo = new ProcessStartInfo
-                {
-                    FileName = chocoPath,
-                    Arguments = "cache -r",  // Remove all cached packages
-                    UseShellExecute = false,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    CreateNoWindow = true
-                };
-                
-                using var cacheProcess = Process.Start(cacheStartInfo);
-                if (cacheProcess != null)
-                {
-                    await cacheProcess.WaitForExitAsync();
-                    if (cacheProcess.ExitCode == 0)
-                    {
-                        Logger.Debug("Chocolatey cache cleared successfully");
-                    }
-                    else
-                    {
-                        Logger.Warning($"Chocolatey cache clear returned exit code: {cacheProcess.ExitCode}");
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Logger.Warning($"Could not clear Chocolatey cache: {ex.Message}");
-            }
-        }
-        
-        static async Task UpgradeChocolatey(string chocoPath)
-        {
-            Logger.Debug("Upgrading Chocolatey to latest version...");
-            Logger.WriteSubProgress("Upgrading Chocolatey", "Ensuring latest version");
-            
-            try
-            {
-                var upgradeStartInfo = new ProcessStartInfo
-                {
-                    FileName = chocoPath,
-                    Arguments = "upgrade chocolatey --confirm",  // Upgrade to latest version
-                    UseShellExecute = false,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    CreateNoWindow = true
-                };
-                
-                using var upgradeProcess = Process.Start(upgradeStartInfo);
-                if (upgradeProcess != null)
-                {
-                    await upgradeProcess.WaitForExitAsync();
-                    if (upgradeProcess.ExitCode == 0)
-                    {
-                        Logger.Debug("Chocolatey upgraded successfully");
-                    }
-                    else
-                    {
-                        Logger.Warning($"Chocolatey upgrade returned exit code: {upgradeProcess.ExitCode}");
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Logger.Warning($"Could not upgrade Chocolatey: {ex.Message}");
-            }
-        }
-        
         static async Task<bool> VerifyChocolateyInstallation(string chocoPath)
         {
             try
@@ -1341,9 +1246,6 @@ namespace BootstrapMate
             
             // First check if chocolatey is installed, install it if missing
             await EnsureChocolateyInstalled();
-            
-            // Ensure we have the latest Chocolatey version and clear cache
-            await EnsureLatestChocolatey();
             
             // Extract package details from the .nupkg file by reading the .nuspec
             string packageDir = Path.GetDirectoryName(nupkgPath) ?? Path.GetTempPath();
@@ -1722,6 +1624,93 @@ namespace BootstrapMate
             }
         }
 
+        static void ClearAllCachesAggressive()
+        {
+            try
+            {
+                Logger.Debug("Starting aggressive cache clearing (BootstrapMate + Chocolatey)");
+                
+                // 1. Clear BootstrapMate package cache
+                string cacheDir = GetCacheDirectory();
+                if (Directory.Exists(cacheDir))
+                {
+                    Directory.Delete(cacheDir, true);
+                    Logger.Debug($"Aggressively cleared BootstrapMate cache: {cacheDir}");
+                }
+                
+                // 2. Clear Chocolatey caches aggressively - all cache locations
+                string[] chocolateyCachePaths = {
+                    @"C:\ProgramData\chocolatey\temp",
+                    @"C:\ProgramData\chocolatey\lib-bad", 
+                    @"C:\ProgramData\chocolatey\.chocolatey",
+                    @"C:\ProgramData\chocolatey\logs",
+                    @"C:\Users\" + Environment.UserName + @"\AppData\Local\Temp\chocolatey"
+                };
+                
+                foreach (string cachePath in chocolateyCachePaths)
+                {
+                    try
+                    {
+                        if (Directory.Exists(cachePath))
+                        {
+                            Directory.Delete(cachePath, true);
+                            Logger.Debug($"Aggressively cleared Chocolatey cache: {cachePath}");
+                            
+                            // Recreate essential directories
+                            if (cachePath.EndsWith("temp") || cachePath.EndsWith(".chocolatey"))
+                            {
+                                Directory.CreateDirectory(cachePath);
+                                Logger.Debug($"Recreated essential cache directory: {cachePath}");
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.Warning($"Could not clear Chocolatey cache {cachePath}: {ex.Message}");
+                    }
+                }
+                
+                // 3. Run chocolatey cache clear command if available
+                try
+                {
+                    string chocoPath = FindChocolateyExecutable();
+                    var startInfo = new ProcessStartInfo
+                    {
+                        FileName = chocoPath,
+                        Arguments = "cache clear --all --force --yes",
+                        UseShellExecute = false,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        CreateNoWindow = true
+                    };
+                    
+                    using var process = Process.Start(startInfo);
+                    if (process != null)
+                    {
+                        process.WaitForExit(10000); // 10 second timeout
+                        if (process.ExitCode == 0)
+                        {
+                            Logger.Debug("Successfully ran 'choco cache clear --all --force'");
+                        }
+                        else
+                        {
+                            Logger.Debug($"choco cache clear returned exit code: {process.ExitCode}");
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.Debug($"Could not run choco cache clear: {ex.Message}");
+                }
+                
+                Logger.Info("Aggressive cache clearing completed");
+            }
+            catch (Exception ex)
+            {
+                Logger.Warning($"Aggressive cache clearing failed: {ex.Message}");
+            }
+        }
+
         static void CleanupOldCache(TimeSpan maxAge)
         {
             try
@@ -1794,27 +1783,20 @@ namespace BootstrapMate
         {
             try
             {
-                Console.WriteLine("Clearing BootstrapMate package cache...");
+                Console.WriteLine("Aggressively clearing all caches (BootstrapMate + Chocolatey)...");
                 
-                string cacheDir = GetCacheDirectory();
-                if (Directory.Exists(cacheDir))
-                {
-                    Directory.Delete(cacheDir, true);
-                    Console.WriteLine($"[+] Cleared package cache: {cacheDir}");
-                    Logger.Info($"Manually cleared package cache: {cacheDir}");
-                }
-                else
-                {
-                    Console.WriteLine($"ℹ️  Package cache directory does not exist: {cacheDir}");
-                    Logger.Info($"Package cache directory does not exist: {cacheDir}");
-                }
+                // Use the aggressive cache clearing method
+                ClearAllCachesAggressive();
+                
+                Console.WriteLine("[+] All caches cleared aggressively");
+                Logger.Info("Manual aggressive cache clearing completed");
 
                 return 0;
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"❌ Error clearing cache: {ex.Message}");
-                Logger.Error($"Error clearing cache: {ex.Message}");
+                Console.WriteLine($"❌ Error clearing caches: {ex.Message}");
+                Logger.Error($"Error clearing caches: {ex.Message}");
                 return 1;
             }
         }
