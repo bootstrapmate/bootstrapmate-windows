@@ -541,14 +541,58 @@ function New-IntuneWinPackage {
     
     Write-Log "Creating .intunewin package for: $([System.IO.Path]::GetFileName($MsiPath))" "INFO"
     
-    # Check for IntuneWinAppUtil.exe
-    if (-not (Test-Command "IntuneWinAppUtil.exe")) {
-        Write-Log "IntuneWinAppUtil.exe not found. Installing via Chocolatey..." "INFO"
+    # Check for IntuneWinAppUtil.exe and try multiple sources
+    $intuneUtilPath = $null
+    
+    # Try local copy first (downloaded working version)
+    $localIntuneUtil = Join-Path $PSScriptRoot "IntuneWinAppUtil.exe"
+    if (Test-Path $localIntuneUtil) {
+        # Test if the local copy works
         try {
-            & choco install intunewinapputil -y --force
-            Write-Log "IntuneWinAppUtil.exe installed successfully" "SUCCESS"
+            $testOutput = & $localIntuneUtil -h 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                $intuneUtilPath = $localIntuneUtil
+                Write-Log "Using local IntuneWinAppUtil.exe (verified working)" "SUCCESS"
+            } else {
+                Write-Log "Local IntuneWinAppUtil.exe exists but doesn't work properly" "WARNING"
+            }
         } catch {
-            Write-Log "Failed to install IntuneWinAppUtil.exe: $($_.Exception.Message)" "ERROR"
+            Write-Log "Local IntuneWinAppUtil.exe test failed: $($_.Exception.Message)" "WARNING"
+        }
+    }
+    
+    # Try system PATH if local copy doesn't work
+    if (-not $intuneUtilPath -and (Test-Command "IntuneWinAppUtil.exe")) {
+        try {
+            $testOutput = & IntuneWinAppUtil.exe -h 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                $intuneUtilPath = "IntuneWinAppUtil.exe"
+                Write-Log "Using system IntuneWinAppUtil.exe (verified working)" "SUCCESS"
+            } else {
+                Write-Log "System IntuneWinAppUtil.exe exists but doesn't work properly" "WARNING"
+            }
+        } catch {
+            Write-Log "System IntuneWinAppUtil.exe test failed: $($_.Exception.Message)" "WARNING"
+        }
+    }
+    
+    # Download working version if needed
+    if (-not $intuneUtilPath) {
+        Write-Log "No working IntuneWinAppUtil.exe found. Downloading from Microsoft..." "INFO"
+        try {
+            $downloadUrl = "https://raw.githubusercontent.com/microsoft/Microsoft-Win32-Content-Prep-Tool/master/IntuneWinAppUtil.exe"
+            $intuneUtilPath = $localIntuneUtil
+            Invoke-WebRequest -Uri $downloadUrl -OutFile $intuneUtilPath -UseBasicParsing
+            
+            # Test the downloaded version
+            $testOutput = & $intuneUtilPath -h 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                Write-Log "Downloaded and verified working IntuneWinAppUtil.exe" "SUCCESS"
+            } else {
+                throw "Downloaded IntuneWinAppUtil.exe doesn't work properly"
+            }
+        } catch {
+            Write-Log "Failed to download working IntuneWinAppUtil.exe: $($_.Exception.Message)" "ERROR"
             return $null
         }
     }
@@ -569,7 +613,7 @@ function New-IntuneWinPackage {
         Remove-Item -Path $existingIntunewin.FullName -Force
     }
     
-    # Create the .intunewin package with silenced output
+    # Create the .intunewin package
     $intuneArgs = @(
         "-c", "`"$setupFolder`""
         "-s", "`"$MsiPath`""
@@ -577,23 +621,41 @@ function New-IntuneWinPackage {
         "-q"  # Quiet mode
     )
     
-    Write-Log "Running: IntuneWinAppUtil.exe $($intuneArgs -join ' ')" "INFO"
+    Write-Log "Running: $intuneUtilPath $($intuneArgs -join ' ')" "INFO"
     
-    # Redirect output to silence the chatty tool
-    $intuneProcess = Start-Process -FilePath "IntuneWinAppUtil.exe" -ArgumentList $intuneArgs -Wait -PassThru -WindowStyle Hidden
-    
-    if ($intuneProcess.ExitCode -eq 0) {
-        $expectedIntuneWin = Join-Path $outputFolder "$msiBaseName.intunewin"
-        if (Test-Path $expectedIntuneWin) {
-            Write-Log ".intunewin package created successfully: $expectedIntuneWin" "SUCCESS"
-            return $expectedIntuneWin
+    try {
+        # Run the actual packaging
+        $process = Start-Process -FilePath $intuneUtilPath -ArgumentList $intuneArgs -Wait -PassThru -WindowStyle Hidden -RedirectStandardOutput "$env:TEMP\intunewin-out.txt" -RedirectStandardError "$env:TEMP\intunewin-err.txt"
+        
+        if ($process.ExitCode -eq 0) {
+            $expectedIntuneWin = Join-Path $outputFolder "$msiBaseName.intunewin"
+            if (Test-Path $expectedIntuneWin) {
+                $fileSize = (Get-Item $expectedIntuneWin).Length
+                $sizeMB = [math]::Round($fileSize / 1MB, 2)
+                Write-Log ".intunewin package created successfully: $expectedIntuneWin ($sizeMB MB)" "SUCCESS"
+                return $expectedIntuneWin
+            } else {
+                Write-Log ".intunewin package creation succeeded but file not found: $expectedIntuneWin" "ERROR"
+                return $null
+            }
         } else {
-            Write-Log ".intunewin package creation succeeded but file not found: $expectedIntuneWin" "ERROR"
+            $errorOutput = ""
+            if (Test-Path "$env:TEMP\intunewin-err.txt") {
+                $errorOutput = Get-Content "$env:TEMP\intunewin-err.txt" -Raw
+            }
+            Write-Log "IntuneWinAppUtil failed with exit code: $($process.ExitCode)" "ERROR"
+            if ($errorOutput) {
+                Write-Log "Error details: $errorOutput" "ERROR"
+            }
             return $null
         }
-    } else {
-        Write-Log "IntuneWinAppUtil failed with exit code: $($intuneProcess.ExitCode)" "ERROR"
+    } catch {
+        Write-Log "Error running IntuneWinAppUtil: $($_.Exception.Message)" "ERROR"
         return $null
+    } finally {
+        # Clean up temp files
+        Remove-Item "$env:TEMP\intunewin-out.txt" -Force -ErrorAction SilentlyContinue
+        Remove-Item "$env:TEMP\intunewin-err.txt" -Force -ErrorAction SilentlyContinue
     }
 }
 
