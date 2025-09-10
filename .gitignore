@@ -553,3 +553,4 @@ lcov.info
 # Performance and profiling
 *.prof
 *.trace
+IntuneWinAppUtil.exe
