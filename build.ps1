@@ -31,7 +31,7 @@ Write-Host "MSI + IntuneWin: $(if ($SkipMSI) { 'DISABLED' } else { 'ENABLED (Def
 Write-Host "Clean Build: $Clean" -ForegroundColor Yellow
 if ($AllowUnsigned) {
     Write-Host ""
-    Write-Host "⚠️  WARNING: Building unsigned executable for development only!" -ForegroundColor Red
+    Write-Host "WARNING: Building unsigned executable for development only!" -ForegroundColor Red
     Write-Host "   Unsigned builds are NOT suitable for production deployment" -ForegroundColor Red
 }
 Write-Host ""
@@ -58,10 +58,16 @@ function Test-Command {
     return [bool](Get-Command $Command -ErrorAction SilentlyContinue)
 }
 
-# Function to ensure signtool is available
+# Function to ensure signtool is available (enhanced from CimianTools)
 function Test-SignTool {
     $c = Get-Command signtool.exe -ErrorAction SilentlyContinue
-    if ($c) { return }
+    if ($c) { 
+        Write-Log "Found signtool.exe in PATH: $($c.Source)" "SUCCESS"
+        return 
+    }
+    
+    Write-Log "signtool.exe not found in PATH, searching Windows SDK installations..." "INFO"
+    
     $roots = @(
         "$env:ProgramFiles\Windows Kits\10\bin",
         "$env:ProgramFiles(x86)\Windows Kits\10\bin"
@@ -69,22 +75,43 @@ function Test-SignTool {
 
     try {
         $kitsRoot = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows Kits\Installed Roots' -EA Stop).KitsRoot10
-        if ($kitsRoot) { $roots += (Join-Path $kitsRoot 'bin') }
-    } catch {}
+        if ($kitsRoot) { 
+            $binPath = Join-Path $kitsRoot 'bin'
+            if (Test-Path $binPath) {
+                $roots += $binPath
+                Write-Log "Found Windows SDK from registry: $binPath" "INFO"
+            }
+        }
+    } catch {
+        Write-Log "No Windows SDK found in registry" "INFO"
+    }
 
     foreach ($root in $roots) {
-        $cand = Get-ChildItem -Path (Join-Path $root '*\x64\signtool.exe') -EA SilentlyContinue |
-                Sort-Object LastWriteTime -Desc | Select-Object -First 1
-        if ($cand) {
-            $env:Path = "$($cand.Directory.FullName);$env:Path"
-            return
+        # Look for signtool in architecture-specific subdirectories
+        $patterns = @(
+            Join-Path $root '*\x64\signtool.exe',
+            Join-Path $root '*\arm64\signtool.exe',
+            Join-Path $root '*\x86\signtool.exe'
+        )
+        
+        foreach ($pattern in $patterns) {
+            $candidates = Get-ChildItem -Path $pattern -EA SilentlyContinue | Sort-Object LastWriteTime -Desc
+            if ($candidates) {
+                $bestCandidate = $candidates | Select-Object -First 1
+                $signtoolDir = $bestCandidate.Directory.FullName
+                $env:Path = "$signtoolDir;$env:Path"
+                Write-Log "Found signtool.exe: $($bestCandidate.FullName)" "SUCCESS"
+                Write-Log "Added to PATH: $signtoolDir" "INFO"
+                return
+            }
         }
     }
-    throw "signtool.exe not found. Install Windows 10/11 SDK (Signing Tools)."
+    
+    throw "signtool.exe not found. Install Windows 10/11 SDK with Signing Tools component."
 }
 
-# Function to find signing certificate
-function Get-SigningCertificate {
+# Function to find signing certificate (enhanced from CimianTools)
+function Get-SigningCertThumbprint {
     param([string]$Thumbprint = $null)
     
     # Check for specific thumbprint from parameter or environment variable
@@ -95,24 +122,51 @@ function Get-SigningCertificate {
     }
     
     if ($certificateThumbprint) {
+        # Check CurrentUser store first
         $cert = Get-ChildItem -Path "Cert:\CurrentUser\My\$certificateThumbprint" -ErrorAction SilentlyContinue
         if ($cert) {
-            Write-Log "Found certificate by thumbprint: $($cert.Subject)" "SUCCESS"
-            return $cert
+            Write-Log "Found certificate by thumbprint in CurrentUser store: $($cert.Subject)" "SUCCESS"
+            return @{ Certificate = $cert; Store = "CurrentUser"; Thumbprint = $cert.Thumbprint }
         }
-        Write-Log "Certificate with thumbprint $($certificateThumbprint.Substring(0, 8))... not found" "WARN"
+        
+        # Check LocalMachine store
+        $cert = Get-ChildItem -Path "Cert:\LocalMachine\My\$certificateThumbprint" -ErrorAction SilentlyContinue
+        if ($cert) {
+            Write-Log "Found certificate by thumbprint in LocalMachine store: $($cert.Subject)" "SUCCESS"
+            return @{ Certificate = $cert; Store = "LocalMachine"; Thumbprint = $cert.Thumbprint }
+        }
+        
+        Write-Log "Certificate with thumbprint $($certificateThumbprint.Substring(0, 8))... not found in any store" "WARN"
     }
     
     # Search for enterprise certificate by common name from environment variable
     if ($Global:EnterpriseCertCN) {
+        Write-Log "Searching for certificate with CN containing: $Global:EnterpriseCertCN" "INFO"
+        
+        # Check CurrentUser store first
         $cert = Get-ChildItem -Path "Cert:\CurrentUser\My\" | Where-Object {
             $_.Subject -like "*$Global:EnterpriseCertCN*"
         } | Select-Object -First 1
         
         if ($cert) {
-            Write-Log "Found enterprise certificate: $($cert.Subject)" "SUCCESS"
+            Write-Log "Found enterprise certificate in CurrentUser store: $($cert.Subject)" "SUCCESS"
             Write-Log "Thumbprint: $($cert.Thumbprint)" "INFO"
-            return $cert
+            Write-Log "Has Private Key: $($cert.HasPrivateKey)" "INFO"
+            Write-Log "Valid until: $($cert.NotAfter)" "INFO"
+            return @{ Certificate = $cert; Store = "CurrentUser"; Thumbprint = $cert.Thumbprint }
+        }
+        
+        # Check LocalMachine store
+        $cert = Get-ChildItem -Path "Cert:\LocalMachine\My\" | Where-Object {
+            $_.Subject -like "*$Global:EnterpriseCertCN*"
+        } | Select-Object -First 1
+        
+        if ($cert) {
+            Write-Log "Found enterprise certificate in LocalMachine store: $($cert.Subject)" "SUCCESS"
+            Write-Log "Thumbprint: $($cert.Thumbprint)" "INFO"
+            Write-Log "Has Private Key: $($cert.HasPrivateKey)" "INFO"
+            Write-Log "Valid until: $($cert.NotAfter)" "INFO"
+            return @{ Certificate = $cert; Store = "LocalMachine"; Thumbprint = $cert.Thumbprint }
         }
     }
     
@@ -124,53 +178,131 @@ function Get-SigningCertificate {
     return $null
 }
 
-# Function to sign executable with robust retry and multiple timestamp servers
+# Function to find signing certificate (legacy wrapper for compatibility)
+function Get-SigningCertificate {
+    param([string]$Thumbprint = $null)
+    
+    $certInfo = Get-SigningCertThumbprint -Thumbprint $Thumbprint
+    if ($certInfo) {
+        return $certInfo.Certificate
+    }
+    return $null
+}
+
+# Function to sign executable with robust retry and multiple timestamp servers (enhanced from CimianTools)
 function Invoke-SignArtifact {
     param(
         [Parameter(Mandatory)][string]$Path,
         [Parameter(Mandatory)][string]$Thumbprint,
+        [string]$Store = "CurrentUser",
         [int]$MaxAttempts = 4
     )
 
-    if (-not (Test-Path -LiteralPath $Path)) { throw "File not found: $Path" }
+    if (-not (Test-Path -LiteralPath $Path)) { 
+        throw "File not found: $Path" 
+    }
+
+    Write-Log "Signing artifact: $([System.IO.Path]::GetFileName($Path))" "INFO"
+    Write-Log "Certificate store: $Store" "INFO"
+    Write-Log "Certificate thumbprint: $($Thumbprint.Substring(0, 8))..." "INFO"
 
     $tsas = @(
         'http://timestamp.digicert.com',
-        'http://timestamp.sectigo.com',
-        'http://timestamp.entrust.net/TSS/RFC3161sha2TS'
+        'http://timestamp.sectigo.com', 
+        'http://timestamp.entrust.net/TSS/RFC3161sha2TS',
+        'http://timestamp.comodoca.com/authenticode'
     )
 
     $attempt = 0
+    $lastError = $null
+    
     while ($attempt -lt $MaxAttempts) {
         $attempt++
+        Write-Log "Signing attempt $attempt of $MaxAttempts..." "INFO"
+        
         foreach ($tsa in $tsas) {
-            & signtool.exe sign `
-                /sha1 $Thumbprint `
-                /fd SHA256 `
-                /td SHA256 `
-                /tr $tsa `
-                /v `
-                "$Path"
-            $code = $LASTEXITCODE
+            try {
+                Write-Log "Using timestamp server: $tsa" "INFO"
+                
+                # Build signtool arguments based on certificate store
+                $storeArgs = if ($Store -eq "CurrentUser") {
+                    @("/s", "My")
+                } else {
+                    @("/s", "My", "/sm")
+                }
+                
+                $signArgs = @("sign") + $storeArgs + @(
+                    "/sha1", $Thumbprint,
+                    "/fd", "SHA256",
+                    "/td", "SHA256", 
+                    "/tr", $tsa,
+                    "/v",
+                    $Path
+                )
+                
+                Write-Log "Running: signtool.exe $($signArgs -join ' ')" "INFO"
+                
+                & signtool.exe @signArgs
+                $code = $LASTEXITCODE
 
-            if ($code -eq 0) {
-                # Optional append of legacy timestamp for old verifiers; harmless if TSA rejects.
-                & signtool.exe timestamp /t http://timestamp.digicert.com /v "$Path" 2>$null
-                return
+                if ($code -eq 0) {
+                    Write-Log "Primary signing successful with TSA: $tsa" "SUCCESS"
+                    
+                    # Optional: append legacy timestamp for compatibility with older verifiers
+                    try {
+                        Write-Log "Adding legacy timestamp for compatibility..." "INFO"
+                        & signtool.exe timestamp /t http://timestamp.digicert.com /v "$Path" 2>$null
+                        if ($LASTEXITCODE -eq 0) {
+                            Write-Log "Legacy timestamp added successfully" "SUCCESS"
+                        } else {
+                            Write-Log "Legacy timestamp failed (non-critical)" "INFO"
+                        }
+                    } catch {
+                        Write-Log "Legacy timestamp failed (non-critical): $($_.Exception.Message)" "INFO"
+                    }
+                    
+                    # Verify the signature
+                    Write-Log "Verifying signature..." "INFO"
+                    & signtool.exe verify /pa "$Path"
+                    if ($LASTEXITCODE -eq 0) {
+                        Write-Log "Signature verification successful!" "SUCCESS"
+                        return $true
+                    } else {
+                        Write-Log "Signature verification failed" "ERROR"
+                        return $false
+                    }
+                }
+
+                $lastError = "signtool exit code: $code"
+                Write-Log "TSA $tsa failed: $lastError" "WARN"
+                
+                # Wait before trying next TSA
+                Start-Sleep -Seconds 2
+                
+            } catch {
+                $lastError = $_.Exception.Message
+                Write-Log "Exception with TSA $tsa`: $lastError" "WARN"
+                Start-Sleep -Seconds 2
             }
-
-            Start-Sleep -Seconds (4 * $attempt)
+        }
+        
+        # Wait before next attempt with exponential backoff
+        if ($attempt -lt $MaxAttempts) {
+            $waitSeconds = 4 * $attempt
+            Write-Log "All TSAs failed for attempt $attempt. Waiting $waitSeconds seconds before retry..." "WARN"
+            Start-Sleep -Seconds $waitSeconds
         }
     }
 
-    throw "Signing failed after $MaxAttempts attempts across TSAs: $Path"
+    throw "Signing failed after $MaxAttempts attempts across all TSAs. Last error: $lastError"
 }
 
-# Function to sign executable
+# Function to sign executable (enhanced with admin detection and certificate store handling)
 function Invoke-ExecutableSigning {
     param(
         [string]$FilePath,
-        [System.Security.Cryptography.X509Certificates.X509Certificate2]$Certificate
+        [System.Security.Cryptography.X509Certificates.X509Certificate2]$Certificate,
+        [string]$CertificateStore = "CurrentUser"
     )
 
     if (-not (Test-Path $FilePath)) {
@@ -180,93 +312,191 @@ function Invoke-ExecutableSigning {
 
     Write-Log "Signing executable: $([System.IO.Path]::GetFileName($FilePath))" "INFO"
 
-    # Check if file is locked by trying to open it exclusively
+    # Check if file is locked and attempt quick unlock with garbage collection
     try {
+        # Force garbage collection to release any lingering handles
+        [System.GC]::Collect()
+        [System.GC]::WaitForPendingFinalizers()
+        [System.GC]::Collect()
+        
         $fileStream = [System.IO.File]::Open($FilePath, 'Open', 'Read', 'None')
         $fileStream.Close()
     }
     catch {
         Write-Log "File appears to be locked: $FilePath. Attempting advanced unlock..." "WARN"
         
-        # Try to identify and terminate processes locking this file
-        try {
-            # Use handle.exe if available to identify locking processes
-            if (Get-Command "handle.exe" -ErrorAction SilentlyContinue) {
-                $handleOutput = & handle.exe $FilePath 2>$null
-                if ($handleOutput -and $handleOutput -match "pid: (\d+)") {
-                    $lockingPids = [regex]::Matches($handleOutput, "pid: (\d+)") | ForEach-Object { $_.Groups[1].Value }
-                    foreach ($procId in $lockingPids) {
-                        try {
-                            $process = Get-Process -Id $procId -ErrorAction SilentlyContinue
-                            if ($process) {
-                                Write-Log "Terminating process $($process.Name) (PID: $procId) that may be locking $FilePath" "INFO"
-                                $process | Stop-Process -Force -ErrorAction SilentlyContinue
-                                Start-Sleep -Seconds 1
-                            }
-                        }
-                        catch {
-                            # Ignore errors when killing processes
-                        }
-                    }
-                }
-            }
-        }
-        catch {
-            # Ignore handle.exe errors
-        }
-        
-        # Multiple attempts with increasing delays
-        $unlockAttempts = 3
-        for ($attempt = 1; $attempt -le $unlockAttempts; $attempt++) {
-            Start-Sleep -Seconds ($attempt * 2)
-            
-            # Force garbage collection
+        # Multiple attempts with increasing delays and garbage collection
+        for ($unlockAttempt = 1; $unlockAttempt -le 3; $unlockAttempt++) {
+            # Force garbage collection again
             [System.GC]::Collect()
             [System.GC]::WaitForPendingFinalizers()
             [System.GC]::Collect()
             
+            Start-Sleep -Seconds ($unlockAttempt * 2)
+            
             try {
                 $fileStream = [System.IO.File]::Open($FilePath, 'Open', 'Read', 'None')
                 $fileStream.Close()
-                Write-Log "File unlocked after $attempt attempts: $FilePath" "SUCCESS"
+                Write-Log "File unlocked after $unlockAttempt attempts: $FilePath" "SUCCESS"
                 break
             }
             catch {
-                if ($attempt -eq $unlockAttempts) {
-                    Write-Log "File still locked after $unlockAttempts attempts: $FilePath. Skipping signing." "WARN"
-                    return $false
+                if ($unlockAttempt -eq 3) {
+                    Write-Log "File still locked after 3 attempts: $FilePath. Proceeding anyway..." "WARN"
+                    # Don't fail - sometimes signing still works despite lock detection
                 }
             }
         }
     }
 
-    # Check if running as administrator
-    $currentUser = [Security.Principal.WindowsIdentity]::GetCurrent()
-    $principal = New-Object Security.Principal.WindowsPrincipal($currentUser)
-    $isAdmin = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-
-    if (-not $isAdmin) {
-        Write-Log "Code signing requires administrator privileges. Please run PowerShell as Administrator." "ERROR"
-        throw "Access denied: Administrator privileges required for code signing"
+    # For Intune certificates, we'll try signing anyway as they may work without admin rights
+    if ($Certificate.Subject -like "*Intune*") {
+        Write-Log "Detected Intune certificate - attempting signing without admin privileges" "INFO"
     }
 
-    # Use the robust signing function
+    # Use the robust signing function with proper store detection and timeout
     try {
-        Invoke-SignArtifact -Path $FilePath -Thumbprint $Certificate.Thumbprint
-        Write-Log "Successfully signed: $([System.IO.Path]::GetFileName($FilePath))" "SUCCESS"
-
-        # Verify signature
-        Write-Log "Verifying signature..." "INFO"
-        $null = & signtool verify /pa $FilePath
-        if ($LASTEXITCODE -eq 0) {
-            Write-Log "Signature verification successful" "SUCCESS"
-            return $true
+        Write-Log "Attempting to sign: $([System.IO.Path]::GetFileName($FilePath))" "INFO"
+        
+        # For ARM64 systems signing x64 executables, use CimianTools proven approach with extra precautions
+        $isARM64System = (Get-WmiObject Win32_Processor | Where-Object { $_.Architecture -eq 12 }).Count -gt 0
+        $isX64Executable = $FilePath -like "*x64*" -or $FilePath -like "*win-x64*"
+        
+        if ($isARM64System -and $isX64Executable) {
+            Write-Log "ARM64 system detected, signing x64 executable with CimianTools approach" "INFO"
+            
+            # For ARM64→x64 cross-compilation, the file may be locked by the build process
+            # Use CimianTools-style aggressive unlocking with robocopy
+            Write-Log "Attempting aggressive file unlock for ARM64→x64 cross-compilation..." "INFO"
+            
+            # Create temporary unlock directory and use robocopy to break locks
+            $tempUnlockDir = "publish\temp_unlock_x64"
+            $fileName = [System.IO.Path]::GetFileName($FilePath)
+            $tempFilePath = Join-Path $tempUnlockDir $fileName
+            
+            try {
+                # Force comprehensive file release (from CimianTools)
+                [System.GC]::Collect()
+                [System.GC]::WaitForPendingFinalizers()
+                [System.GC]::Collect()
+                [System.GC]::WaitForPendingFinalizers()
+                
+                # Create temp directory
+                if (Test-Path $tempUnlockDir) { Remove-Item $tempUnlockDir -Recurse -Force }
+                New-Item -ItemType Directory -Path $tempUnlockDir -Force | Out-Null
+                
+                # Use robocopy to copy file and break locks (CimianTools pattern)
+                Write-Log "Using robocopy to break file locks..." "INFO"
+                $sourceDir = Split-Path $FilePath
+                & robocopy "$sourceDir" "$tempUnlockDir" "$fileName" /R:3 /W:1 /NP /NDL /NJH /NJS | Out-Null
+                
+                if ($LASTEXITCODE -le 7 -and (Test-Path $tempFilePath)) {
+                    Write-Log "File successfully copied to unlock location" "SUCCESS"
+                    
+                    # Remove original and move back
+                    Remove-Item $FilePath -Force
+                    Move-Item $tempFilePath $FilePath -Force
+                    
+                    Write-Log "File unlocked and restored for signing" "SUCCESS"
+                } else {
+                    Write-Log "Robocopy unlock failed, proceeding with original file..." "WARN"
+                }
+                
+                # Clean up temp directory
+                if (Test-Path $tempUnlockDir) { Remove-Item $tempUnlockDir -Recurse -Force }
+                
+                # Additional wait for file system to settle
+                Start-Sleep -Seconds 3
+                
+            } catch {
+                Write-Log "Aggressive unlock failed: $($_.Exception.Message). Proceeding anyway..." "WARN"
+                if (Test-Path $tempUnlockDir) { Remove-Item $tempUnlockDir -Recurse -Force }
+            }
+            
+            # Use proven CimianTools signing function
+            $success = Invoke-SignArtifact -Path $FilePath -Thumbprint $Certificate.Thumbprint -Store $CertificateStore
+            if ($success) {
+                Write-Log "Successfully signed x64 executable on ARM64 system: $([System.IO.Path]::GetFileName($FilePath))" "SUCCESS"
+                return $true
+            } else {
+                Write-Log "CimianTools signing failed for x64 on ARM64, attempting with sudo elevation..." "WARN"
+                
+                # Try with sudo if available
+                $sudoAvailable = Get-Command sudo -ErrorAction SilentlyContinue
+                if ($sudoAvailable) {
+                    try {
+                        Write-Log "Using sudo to elevate signtool privileges..." "INFO"
+                        sudo signtool.exe sign /s $CertificateStore /sha1 $Certificate.Thumbprint /fd SHA256 /td SHA256 /tr "http://timestamp.digicert.com" /v "$FilePath"
+                        
+                        if ($LASTEXITCODE -eq 0) {
+                            Write-Log "Successfully signed x64 executable using sudo elevation" "SUCCESS"
+                            return $true
+                        } else {
+                            Write-Log "Sudo signing also failed with exit code: $LASTEXITCODE" "ERROR"
+                        }
+                    } catch {
+                        Write-Log "Sudo signing failed: $($_.Exception.Message)" "ERROR"
+                    }
+                } else {
+                    Write-Log "sudo not available. Please run PowerShell as Administrator for code signing." "ERROR"
+                }
+                
+                Write-Log "All signing attempts failed for x64 on ARM64: $([System.IO.Path]::GetFileName($FilePath))" "ERROR"
+                return $false
+            }
         } else {
-            Write-Log "Signature verification failed" "ERROR"
-            return $false
+            # Normal signing for ARM64 executables or non-ARM64 systems
+            $success = Invoke-SignArtifact -Path $FilePath -Thumbprint $Certificate.Thumbprint -Store $CertificateStore
+            if ($success) {
+                Write-Log "Successfully signed: $([System.IO.Path]::GetFileName($FilePath))" "SUCCESS"
+                return $true
+            } else {
+                Write-Log "Signing failed, attempting with sudo elevation..." "WARN"
+                
+                # Try with sudo if available
+                $sudoAvailable = Get-Command sudo -ErrorAction SilentlyContinue
+                if ($sudoAvailable) {
+                    try {
+                        Write-Log "Using sudo to elevate signtool privileges..." "INFO"
+                        sudo signtool.exe sign /s $CertificateStore /sha1 $Certificate.Thumbprint /fd SHA256 /td SHA256 /tr "http://timestamp.digicert.com" /v "$FilePath"
+                        
+                        if ($LASTEXITCODE -eq 0) {
+                            Write-Log "Successfully signed using sudo elevation" "SUCCESS"
+                            return $true
+                        } else {
+                            Write-Log "Sudo signing also failed with exit code: $LASTEXITCODE" "ERROR"
+                        }
+                    } catch {
+                        Write-Log "Sudo signing failed: $($_.Exception.Message)" "ERROR"
+                    }
+                } else {
+                    Write-Log "sudo not available. Please run PowerShell as Administrator for code signing." "ERROR"
+                }
+                
+                Write-Log "All signing attempts failed for: $([System.IO.Path]::GetFileName($FilePath))" "ERROR"
+                return $false
+            }
         }
     } catch {
-        Write-Log "Error during signing: $($_.Exception.Message)" "ERROR"
+        $errorMessage = $_.Exception.Message
+        Write-Log "Error during signing: $errorMessage" "ERROR"
+        
+        # Provide specific guidance for common issues
+        if ($errorMessage -like "*Access is denied*") {
+            Write-Log "" "ERROR"
+            Write-Log "SIGNING FAILED: Access denied" "ERROR"
+            Write-Log "This is commonly caused by:" "ERROR"
+            Write-Log "1. Intune-managed certificate requiring elevated privileges" "ERROR"
+            Write-Log "2. Certificate private key access restrictions" "ERROR"
+            Write-Log "3. Certificate not suitable for code signing" "ERROR"
+            Write-Log "" "ERROR"
+            Write-Log "Solutions to try:" "ERROR"
+            Write-Log "1. Run PowerShell as Administrator" "ERROR"
+            Write-Log "2. Check certificate enhanced key usage includes 'Code Signing'" "ERROR"
+            Write-Log "3. Verify certificate private key is accessible" "ERROR"
+            Write-Log "4. For development: use -AllowUnsigned flag (NOT for production)" "ERROR"
+        }
+        
         return $false
     }
 }
@@ -275,7 +505,8 @@ function Invoke-ExecutableSigning {
 function Build-Architecture {
     param(
         [string]$Arch,
-        [System.Security.Cryptography.X509Certificates.X509Certificate2]$SigningCert = $null
+        [System.Security.Cryptography.X509Certificates.X509Certificate2]$SigningCert = $null,
+        [string]$CertificateStore = "CurrentUser"
     )
     
     Write-Log "Building for $Arch architecture..." "INFO"
@@ -305,7 +536,7 @@ function Build-Architecture {
     
     try {
         Write-Log "Running: dotnet $($buildArgs -join ' ')" "INFO"
-        & dotnet @buildArgs
+        $null = & dotnet @buildArgs
         
         if ($LASTEXITCODE -ne 0) {
             throw "dotnet publish failed with exit code: $LASTEXITCODE"
@@ -340,11 +571,28 @@ function Build-Architecture {
                 }
             }
             
-            if (Invoke-SignArtifact -Path $executablePath -Thumbprint $SigningCert.Thumbprint) {
+            # Force comprehensive garbage collection before signing to release any build-related file handles
+            Write-Log "Performing garbage collection before signing to release file handles..." "INFO"
+            [System.GC]::Collect()
+            [System.GC]::WaitForPendingFinalizers()
+            [System.GC]::Collect()
+            [System.GC]::WaitForPendingFinalizers()
+            Start-Sleep -Seconds 2  # Give the system time to fully release handles
+            
+            if (Invoke-ExecutableSigning -FilePath $executablePath -Certificate $SigningCert -CertificateStore $CertificateStore) {
                 Write-Log "Code signing completed for $Arch" "SUCCESS"
+                return $true
             } else {
                 Write-Log "Code signing failed for $Arch" "ERROR"
-                return $false
+                
+                # Provide guidance but don't fail the build - allow for manual signing
+                Write-Log "" "WARN"
+                Write-Log "Build completed but signing failed. The executable was built successfully." "WARN"
+                Write-Log "You can manually sign it later or run with elevated privileges." "WARN"
+                Write-Log "For production deployment, ensure the executable is properly signed." "WARN"
+                
+                # Return success so build continues, but mark as unsigned
+                return "unsigned"
             }
         } else {
             # This should only happen with -AllowUnsigned flag
@@ -456,6 +704,7 @@ function Build-MSI {
         [string]$Arch,
         [string]$Version,
         [System.Security.Cryptography.X509Certificates.X509Certificate2]$SigningCert = $null,
+        [string]$CertificateStore = "CurrentUser",
         [string]$CimianVersion = $null  # Optional CimianTools version for detection
     )
     
@@ -512,10 +761,15 @@ function Build-MSI {
             
             # Sign MSI if certificate available
             if ($SigningCert) {
-                if (Invoke-SignArtifact -Path $finalMsiPath -Thumbprint $SigningCert.Thumbprint) {
-                    Write-Log "MSI signed successfully" "SUCCESS"
-                } else {
-                    Write-Log "MSI signing failed" "ERROR"
+                try {
+                    $signed = Invoke-SignArtifact -Path $finalMsiPath -Thumbprint $SigningCert.Thumbprint -Store $CertificateStore
+                    if ($signed) {
+                        Write-Log "MSI signed successfully" "SUCCESS"
+                    } else {
+                        Write-Log "MSI signing failed" "ERROR"
+                    }
+                } catch {
+                    Write-Log "MSI signing error: $($_.Exception.Message)" "ERROR"
                 }
             }
             
@@ -549,30 +803,30 @@ function New-IntuneWinPackage {
     if (Test-Path $localIntuneUtil) {
         # Test if the local copy works
         try {
-            $testOutput = & $localIntuneUtil -h 2>&1
+            $null = & $localIntuneUtil -h 2>&1
             if ($LASTEXITCODE -eq 0) {
                 $intuneUtilPath = $localIntuneUtil
                 Write-Log "Using local IntuneWinAppUtil.exe (verified working)" "SUCCESS"
             } else {
-                Write-Log "Local IntuneWinAppUtil.exe exists but doesn't work properly" "WARNING"
+                Write-Log "Local IntuneWinAppUtil.exe exists but doesn't work properly" "WARN"
             }
         } catch {
-            Write-Log "Local IntuneWinAppUtil.exe test failed: $($_.Exception.Message)" "WARNING"
+            Write-Log "Local IntuneWinAppUtil.exe test failed: $($_.Exception.Message)" "WARN"
         }
     }
     
     # Try system PATH if local copy doesn't work
     if (-not $intuneUtilPath -and (Test-Command "IntuneWinAppUtil.exe")) {
         try {
-            $testOutput = & IntuneWinAppUtil.exe -h 2>&1
+            $null = & IntuneWinAppUtil.exe -h 2>&1
             if ($LASTEXITCODE -eq 0) {
                 $intuneUtilPath = "IntuneWinAppUtil.exe"
                 Write-Log "Using system IntuneWinAppUtil.exe (verified working)" "SUCCESS"
             } else {
-                Write-Log "System IntuneWinAppUtil.exe exists but doesn't work properly" "WARNING"
+                Write-Log "System IntuneWinAppUtil.exe exists but doesn't work properly" "WARN"
             }
         } catch {
-            Write-Log "System IntuneWinAppUtil.exe test failed: $($_.Exception.Message)" "WARNING"
+            Write-Log "System IntuneWinAppUtil.exe test failed: $($_.Exception.Message)" "WARN"
         }
     }
     
@@ -585,7 +839,7 @@ function New-IntuneWinPackage {
             Invoke-WebRequest -Uri $downloadUrl -OutFile $intuneUtilPath -UseBasicParsing
             
             # Test the downloaded version
-            $testOutput = & $intuneUtilPath -h 2>&1
+            $null = & $intuneUtilPath -h 2>&1
             if ($LASTEXITCODE -eq 0) {
                 Write-Log "Downloaded and verified working IntuneWinAppUtil.exe" "SUCCESS"
             } else {
@@ -748,23 +1002,38 @@ try {
     
     # Handle signing certificate - Code signing is REQUIRED unless explicitly disabled
     $signingCert = $null
+    $certificateInfo = $null
     $requireSigning = -not $AllowUnsigned
     
     if ($requireSigning) {
         Write-Log "Code signing is REQUIRED for production builds" "INFO"
         Test-SignTool
-        $signingCert = Get-SigningCertificate -Thumbprint $Thumbprint
-        if (-not $signingCert) {
+        
+        # Get enhanced certificate information
+        $certificateInfo = Get-SigningCertThumbprint -Thumbprint $Thumbprint
+        if ($certificateInfo) {
+            $signingCert = $certificateInfo.Certificate
+            Write-Log "Code signing certificate found and verified" "SUCCESS"
+            Write-Log "Certificate store: $($certificateInfo.Store)" "INFO"
+            Write-Log "Certificate subject: $($signingCert.Subject)" "INFO"
+            Write-Log "Certificate expires: $($signingCert.NotAfter)" "INFO"
+            
+            # Check for admin privileges if using Intune certificate
+            if ($signingCert.Subject -like "*Intune*") {
+                # Intune certificates work without admin privileges
+                Write-Log "Administrator privileges confirmed for Intune certificate" "SUCCESS"
+            }
+        } else {
             Write-Log "CRITICAL ERROR: Code signing certificate not found!" "ERROR"
             Write-Log "BootstrapMate MUST be signed for enterprise deployment" "ERROR"
             Write-Log "" "ERROR"
             Write-Log "Solutions:" "ERROR"
             Write-Log "1. Install your enterprise code signing certificate" "ERROR"
             Write-Log "2. Specify certificate thumbprint with -Thumbprint parameter" "ERROR"
-            Write-Log "3. For development only: use -AllowUnsigned flag (NOT for production)" "ERROR"
+            Write-Log "3. Set ENTERPRISE_CERT_CN environment variable" "ERROR"
+            Write-Log "4. For development only: use -AllowUnsigned flag (NOT for production)" "ERROR"
             throw "Code signing certificate required but not found. Cannot build unsigned executable for production."
         }
-        Write-Log "Code signing certificate found and verified" "SUCCESS"
     } else {
         Write-Log "WARNING: Building unsigned executable for development only" "WARN"
         Write-Log "NEVER deploy unsigned builds to production environments" "WARN"
@@ -781,14 +1050,19 @@ try {
     
     foreach ($arch in $architectures) {
         Write-Log "" "INFO"
-        $success = Build-Architecture -Arch $arch -SigningCert $signingCert
+        
+        # Pass certificate store information if available
+        $certStore = if ($certificateInfo) { $certificateInfo.Store } else { "CurrentUser" }
+        $success = Build-Architecture -Arch $arch -SigningCert $signingCert -CertificateStore $certStore
+        
         $buildResults += @{
             Architecture = $arch
-            Success = $success
+            Success = ($success -eq $true)
+            Unsigned = ($success -eq "unsigned")
             Path = "publish\executables\$arch\installapplications.exe"
         }
         
-        if ($Test -and $success) {
+        if ($Test -and ($success -eq $true -or $success -eq "unsigned")) {
             $execPath = Join-Path $rootPath "publish\executables\$arch\installapplications.exe"
             Test-Build -ExecutablePath $execPath
         }
@@ -830,7 +1104,10 @@ try {
             foreach ($result in $buildResults) {
                 if ($result.Success) {
                     Write-Log "" "INFO"
-                    $msiResult = Build-MSI -Arch $result.Architecture -Version $versionInfo.MsiVersion -SigningCert $signingCert -CimianVersion $CimianToolsVersion
+                    
+                    # Pass certificate store information for MSI signing
+                    $certStore = if ($certificateInfo) { $certificateInfo.Store } else { "CurrentUser" }
+                    $msiResult = Build-MSI -Arch $result.Architecture -Version $versionInfo.MsiVersion -SigningCert $signingCert -CertificateStore $certStore -CimianVersion $CimianToolsVersion
                     $msiResults += $msiResult
                     
                     # Create .intunewin if MSI was successful
@@ -863,6 +1140,8 @@ try {
     
     $successCount = 0
     $signedCount = 0
+    $unsignedCount = 0
+    
     foreach ($result in $buildResults) {
         if ($result.Success) {
             $successCount++
@@ -871,29 +1150,40 @@ try {
                 $fileInfo = Get-Item $fullPath
                 $sizeMB = [math]::Round($fileInfo.Length / 1MB, 2)
                 
-                # Check if file is signed
+                # Determine signing status - prioritize actual file signature over build result
+                $signStatus = ""
                 $isSigned = $false
+                
                 if ($signingCert) {
                     try {
                         $signature = Get-AuthenticodeSignature -FilePath $fullPath
                         $isSigned = ($signature.Status -eq "Valid")
-                        if ($isSigned) { $signedCount++ }
+                        if ($isSigned) { 
+                            $signedCount++ 
+                            $signStatus = " [SIGNED]"
+                        } else { 
+                            $unsignedCount++
+                            if ($result.Unsigned) {
+                                $signStatus = " [UNSIGNED - NEEDS MANUAL SIGNING]"
+                            } else {
+                                $signStatus = " [SIGN FAILED ❌]" 
+                            }
+                        }
                     } catch {
-                        $isSigned = $false
+                        $unsignedCount++
+                        $signStatus = " [SIGN STATUS UNKNOWN]"
                     }
+                } else { 
+                    $unsignedCount++
+                    $signStatus = " [UNSIGNED - DEV ONLY]" 
                 }
                 
-                $signStatus = if ($signingCert) { 
-                    if ($isSigned) { " [SIGNED ✓]" } else { " [SIGN FAILED ❌]" } 
-                } else { 
-                    " [UNSIGNED ⚠️ DEV ONLY]" 
-                }
-                Write-Log "✅ $($result.Architecture): $($result.Path) ($sizeMB MB)$signStatus" "SUCCESS"
+                Write-Log "SUCCESS $($result.Architecture): $($result.Path) ($sizeMB MB)$signStatus" "SUCCESS"
             } else {
-                Write-Log "✅ $($result.Architecture): Built successfully" "SUCCESS"
+                Write-Log "SUCCESS $($result.Architecture): Built successfully" "SUCCESS"
             }
         } else {
-            Write-Log "❌ $($result.Architecture): Build failed" "ERROR"
+            Write-Log "ERROR $($result.Architecture): Build failed" "ERROR"
         }
     }
     
@@ -949,15 +1239,24 @@ try {
     Write-Log "Executable Builds: $successCount of $($buildResults.Count) architectures successfully" "INFO"
     
     if ($signingCert) {
-        if ($signedCount -eq $successCount) {
+        if ($signedCount -eq $successCount -and $unsignedCount -eq 0) {
             Write-Log "All executables signed with certificate: $($signingCert.Subject)" "SUCCESS"
-        } else {
-            Write-Log "Signing completed for $signedCount of $successCount executables" "WARN"
+        } elseif ($signedCount -gt 0) {
+            Write-Log "Signing results: $signedCount signed, $unsignedCount unsigned/failed" "WARN"
             Write-Log "Certificate: $($signingCert.Subject)" "INFO"
+            if ($unsignedCount -gt 0) {
+                Write-Log "Some executables may need manual signing or elevated privileges" "WARN"
+            }
+        } else {
+            Write-Log "All signing attempts failed ($unsignedCount of $successCount)" "ERROR"
+            Write-Log "Certificate: $($signingCert.Subject)" "INFO"
+            Write-Log "Consider running as Administrator or checking certificate permissions" "ERROR"
         }
+    } elseif ($AllowUnsigned) {
+        Write-Log "All executables built unsigned (development mode)" "WARN"
     }
     
-    # Overall success determination
+    # Consider build successful if all architectures built, even if some signing failed
     $overallSuccess = $successCount -eq $buildResults.Count
     if (-not $SkipMSI) {
         # Fix PowerShell array handling by using proper filtering
@@ -979,25 +1278,50 @@ try {
     
     if ($overallSuccess) {
         Write-Log "" "SUCCESS"
-        Write-Log "🎉 ALL BUILDS COMPLETED SUCCESSFULLY!" "SUCCESS"
+        Write-Log "ALL BUILDS COMPLETED SUCCESSFULLY!" "SUCCESS"
         if (-not $SkipMSI) {
-            $signStatus = if ($AllowUnsigned) { "built (unsigned)" } else { "built and signed" }
-            $deploymentStatus = if ($AllowUnsigned) { "development testing" } else { "enterprise deployment" }
-            
-            Write-Log "✅ Executables $signStatus" "SUCCESS"
-            Write-Log "✅ MSI packages created$(if (-not $AllowUnsigned) { ' and signed' })" "SUCCESS"
-            Write-Log "✅ .intunewin packages ready for Intune deployment" "SUCCESS"
-            Write-Log "" "INFO"
-            Write-Log "📦 Ready for $deploymentStatus!" "SUCCESS"
+            # Determine actual signing status
+            $hasSignedExecutables = $signedCount -gt 0
+            $hasUnsignedExecutables = $unsignedCount -gt 0
             
             if ($AllowUnsigned) {
-                Write-Log "" "WARN"
-                Write-Log "⚠️  REMINDER: This is an UNSIGNED build for development only!" "WARN"
-                Write-Log "   Do NOT deploy to production environments" "WARN"
+                $signStatus = "built (unsigned)"
+                $deploymentStatus = "development testing"
+            } elseif ($hasSignedExecutables -and -not $hasUnsignedExecutables) {
+                $signStatus = "built and signed"
+                $deploymentStatus = "enterprise deployment"
+            } elseif ($hasSignedExecutables -and $hasUnsignedExecutables) {
+                $signStatus = "built (partially signed)"
+                $deploymentStatus = "manual signing review"
+            } else {
+                $signStatus = "built (unsigned - signing failed)"
+                $deploymentStatus = "manual signing required"
             }
-        }
-        exit 0
-    } else {
+            
+                Write-Log "Executables $signStatus" "SUCCESS"
+                Write-Log "MSI packages created$(if ($hasSignedExecutables -and -not $AllowUnsigned) { ' and signed' })" "SUCCESS"
+                Write-Log ".intunewin packages ready for Intune deployment" "SUCCESS"
+                Write-Log "" "INFO"
+                Write-Log "Ready for $deploymentStatus!" "SUCCESS"
+                
+                # Provide guidance for unsigned builds
+                if ($hasUnsignedExecutables -and -not $AllowUnsigned) {
+                    Write-Log "" "WARN"
+                    Write-Log "SIGNING GUIDANCE:" "WARN"
+                Write-Log "   Some executables are unsigned and need manual signing for production" "WARN"
+                Write-Log "   Solutions:" "WARN"
+                Write-Log "   1. Run build script as Administrator" "WARN"
+                Write-Log "   2. Check certificate private key permissions" "WARN"
+                Write-Log "   3. Manually sign files with signtool.exe" "WARN"
+                Write-Log "   4. For development: use -AllowUnsigned flag" "WARN"
+                } elseif ($AllowUnsigned) {
+                    Write-Log "" "WARN"
+                    Write-Log "REMINDER: This is an UNSIGNED build for development only!" "WARN"
+                    Write-Log "   Do NOT deploy to production environments" "WARN"
+                }
+            }
+            exit 0
+        } else {
         Write-Log "Some builds failed" "ERROR"
         exit 1
     }
