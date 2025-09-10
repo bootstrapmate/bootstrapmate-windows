@@ -875,9 +875,61 @@ namespace BootstrapMate
                 Logger.Debug($"WHERE command failed: {ex.Message}");
             }
             
-            // Last resort: assume choco.exe is in PATH
-            Logger.Warning("Could not locate Chocolatey executable, falling back to 'choco.exe'");
-            return "choco.exe";
+            // Instead of falling back to "choco.exe", return null to indicate no executable found
+            Logger.Warning("Could not locate Chocolatey executable anywhere on the system");
+            return null;
+        }
+        
+        static bool IsBrokenChocolateyInstallation()
+        {
+            // Check if we have a broken Chocolatey installation:
+            // - Folder exists at C:\ProgramData\chocolatey
+            // - But no working choco.exe executable
+            
+            string chocolateyRoot = @"C:\ProgramData\chocolatey";
+            string chocoExe = Path.Combine(chocolateyRoot, "bin", "choco.exe");
+            
+            if (Directory.Exists(chocolateyRoot))
+            {
+                // Folder exists, check if executable works
+                if (!File.Exists(chocoExe))
+                {
+                    Logger.Warning($"Broken Chocolatey detected: folder exists at {chocolateyRoot} but no choco.exe found");
+                    return true;
+                }
+                
+                // Executable exists, test if it actually works
+                try
+                {
+                    var testProcess = new ProcessStartInfo
+                    {
+                        FileName = chocoExe,
+                        Arguments = "--version",
+                        UseShellExecute = false,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        CreateNoWindow = true
+                    };
+                    
+                    using var process = Process.Start(testProcess);
+                    if (process != null)
+                    {
+                        process.WaitForExit(5000); // 5 second timeout
+                        if (process.ExitCode != 0)
+                        {
+                            Logger.Warning($"Broken Chocolatey detected: choco.exe exists but fails to run (exit code: {process.ExitCode})");
+                            return true;
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.Warning($"Broken Chocolatey detected: choco.exe exists but cannot be executed: {ex.Message}");
+                    return true;
+                }
+            }
+            
+            return false;
         }
 
         static void CleanupChocolateyLib()
@@ -1000,57 +1052,337 @@ namespace BootstrapMate
             }
         }
         
+        static async Task<bool> PerformAggressiveChocolateyCleanup()
+        {
+            try
+            {
+                string chocolateyRoot = @"C:\ProgramData\chocolatey";
+                Logger.Info($"Starting aggressive cleanup of broken Chocolatey installation at: {chocolateyRoot}");
+                
+                // Step 1: Kill all Chocolatey processes
+                Logger.Debug("Step 1: Terminating all Chocolatey processes...");
+                var chocoProcesses = Process.GetProcessesByName("choco");
+                foreach (var proc in chocoProcesses)
+                {
+                    try
+                    {
+                        Logger.Debug($"Terminating chocolatey process (PID: {proc.Id})");
+                        proc.Kill();
+                        proc.WaitForExit(5000);
+                        proc.Dispose();
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.Debug($"Could not kill process {proc.Id}: {ex.Message}");
+                    }
+                }
+                
+                // Step 2: Clean environment variables first (critical for forcing reinstall)
+                Logger.Debug("Step 2: Cleaning Chocolatey environment variables...");
+                try
+                {
+                    Environment.SetEnvironmentVariable("ChocolateyInstall", null, EnvironmentVariableTarget.Machine);
+                    Environment.SetEnvironmentVariable("ChocolateyInstall", null, EnvironmentVariableTarget.User);
+                    Environment.SetEnvironmentVariable("ChocolateyInstall", null, EnvironmentVariableTarget.Process);
+                    Logger.Debug("Environment variables cleaned");
+                }
+                catch (Exception ex)
+                {
+                    Logger.Warning($"Could not clean environment variables: {ex.Message}");
+                }
+                
+                // Step 3: CRITICAL - Complete nuclear removal of Chocolatey directory
+                // This MUST succeed or Chocolatey installer will think it's already installed
+                if (Directory.Exists(chocolateyRoot))
+                {
+                    Logger.Warning($"CRITICAL: Performing nuclear removal of broken Chocolatey at: {chocolateyRoot}");
+                    Logger.Info("This is necessary because Chocolatey installer detects existing folder and skips installation");
+                    
+                    bool removalSuccess = false;
+                    
+                    // Method 1: Use PowerShell with maximum force
+                    Logger.Debug("Method 1: Using PowerShell Remove-Item with maximum force...");
+                    try
+                    {
+                        string psCommand = @"
+                            $ErrorActionPreference = 'Stop'
+                            $path = 'C:\ProgramData\chocolatey'
+                            if (Test-Path $path) {
+                                Write-Host 'Attempting PowerShell removal...'
+                                Remove-Item -Path $path -Recurse -Force -ErrorAction SilentlyContinue
+                                Start-Sleep -Seconds 2
+                                if (Test-Path $path) {
+                                    Write-Host 'Standard removal failed, trying takeown + icacls...'
+                                    takeown /f $path /r /d y | Out-Null
+                                    icacls $path /grant administrators:F /t | Out-Null
+                                    Remove-Item -Path $path -Recurse -Force -ErrorAction SilentlyContinue
+                                }
+                            }
+                        ";
+                        
+                        var psProcess = new ProcessStartInfo
+                        {
+                            FileName = "powershell.exe",
+                            Arguments = $"-ExecutionPolicy Bypass -Command \"{psCommand}\"",
+                            UseShellExecute = true, // Run elevated
+                            CreateNoWindow = true,
+                            WindowStyle = ProcessWindowStyle.Hidden
+                        };
+                        
+                        using var process = Process.Start(psProcess);
+                        if (process != null)
+                        {
+                            await process.WaitForExitAsync();
+                            Logger.Debug($"PowerShell cleanup completed with exit code: {process.ExitCode}");
+                        }
+                        
+                        await Task.Delay(2000); // Wait for file handles to release
+                        
+                        if (!Directory.Exists(chocolateyRoot))
+                        {
+                            Logger.Info("✅ PowerShell nuclear removal successful");
+                            removalSuccess = true;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.Warning($"PowerShell nuclear removal failed: {ex.Message}");
+                    }
+                    
+                    // Method 2: C# Directory.Delete with multiple retries
+                    if (!removalSuccess && Directory.Exists(chocolateyRoot))
+                    {
+                        Logger.Debug("Method 2: Using C# Directory.Delete with retries...");
+                        for (int attempt = 1; attempt <= 5; attempt++)
+                        {
+                            try
+                            {
+                                Directory.Delete(chocolateyRoot, true);
+                                Logger.Info($"✅ C# Directory.Delete succeeded on attempt {attempt}");
+                                removalSuccess = true;
+                                break;
+                            }
+                            catch (Exception ex)
+                            {
+                                Logger.Warning($"C# Directory.Delete attempt {attempt}/5 failed: {ex.Message}");
+                                if (attempt < 5)
+                                {
+                                    await Task.Delay(3000); // Wait 3 seconds before retry
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Method 3: Last resort - try to remove just enough to make installer think it's not installed
+                    if (!removalSuccess && Directory.Exists(chocolateyRoot))
+                    {
+                        Logger.Warning("Method 3: Last resort - removing critical files to trick installer...");
+                        try
+                        {
+                            // Remove the bin folder specifically (this is what Chocolatey installer checks)
+                            string binPath = Path.Combine(chocolateyRoot, "bin");
+                            if (Directory.Exists(binPath))
+                            {
+                                Directory.Delete(binPath, true);
+                                Logger.Info("Removed bin folder");
+                            }
+                            
+                            // Remove the lib folder (packages)
+                            string libPath = Path.Combine(chocolateyRoot, "lib");
+                            if (Directory.Exists(libPath))
+                            {
+                                Directory.Delete(libPath, true);
+                                Logger.Info("Removed lib folder");
+                            }
+                            
+                            // Remove install marker files
+                            string[] markerFiles = {
+                                Path.Combine(chocolateyRoot, ".chocolatey"),
+                                Path.Combine(chocolateyRoot, "choco.exe.manifest"),
+                                Path.Combine(chocolateyRoot, "redirects")
+                            };
+                            
+                            foreach (string marker in markerFiles)
+                            {
+                                if (File.Exists(marker))
+                                {
+                                    File.Delete(marker);
+                                    Logger.Debug($"Removed marker: {marker}");
+                                }
+                            }
+                            
+                            removalSuccess = true; // Good enough for installer to proceed
+                            Logger.Info("✅ Critical file removal successful - installer should proceed");
+                        }
+                        catch (Exception ex)
+                        {
+                            Logger.Error($"Last resort removal also failed: {ex.Message}");
+                        }
+                    }
+                    
+                    if (!removalSuccess)
+                    {
+                        Logger.Error("❌ CRITICAL FAILURE: Could not remove broken Chocolatey installation");
+                        Logger.Error("This will prevent proper Chocolatey reinstallation");
+                        return false;
+                    }
+                }
+                
+                // Step 4: Clean up PATH environment variable
+                Logger.Debug("Step 4: Cleaning Chocolatey from PATH...");
+                try
+                {
+                    string currentPath = Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.Machine) ?? "";
+                    string cleanedPath = string.Join(";", 
+                        currentPath.Split(';')
+                                   .Where(p => !p.Contains("chocolatey", StringComparison.OrdinalIgnoreCase))
+                                   .Where(p => !string.IsNullOrWhiteSpace(p)));
+                    
+                    if (cleanedPath != currentPath)
+                    {
+                        Environment.SetEnvironmentVariable("PATH", cleanedPath, EnvironmentVariableTarget.Machine);
+                        Logger.Debug("Cleaned Chocolatey paths from system PATH");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.Warning($"Could not clean PATH variable: {ex.Message}");
+                }
+                
+                // Step 5: Final verification and force environment refresh
+                Logger.Debug("Step 5: Final verification and environment refresh...");
+                try
+                {
+                    // Force refresh environment variables in current process
+                    Environment.SetEnvironmentVariable("ChocolateyInstall", null);
+                    
+                    // Update PATH in current process
+                    string machinePath = Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.Machine) ?? "";
+                    string userPath = Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.User) ?? "";
+                    Environment.SetEnvironmentVariable("PATH", $"{machinePath};{userPath}");
+                    
+                    Logger.Debug("Environment variables refreshed in current process");
+                }
+                catch (Exception ex)
+                {
+                    Logger.Warning($"Could not refresh environment variables: {ex.Message}");
+                }
+                
+                // Final check
+                bool isCleanedUp = !Directory.Exists(chocolateyRoot) || 
+                                  !Directory.Exists(Path.Combine(chocolateyRoot, "bin")) ||
+                                  !File.Exists(Path.Combine(chocolateyRoot, "bin", "choco.exe"));
+                
+                if (isCleanedUp)
+                {
+                    Logger.Info("✅ Nuclear Chocolatey cleanup completed successfully");
+                    Logger.Info("Chocolatey installer should now detect a clean system and perform full installation");
+                    return true;
+                }
+                else
+                {
+                    Logger.Error("❌ Nuclear Chocolatey cleanup failed - installation artifacts still present");
+                    return false;
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"Exception during nuclear Chocolatey cleanup: {ex.Message}");
+                return false;
+            }
+        }
+        
         static async Task EnsureChocolateyInstalled()
         {
             Logger.Debug("Checking if Chocolatey is installed...");
             
-            // FIRST: Clean up any corrupted Chocolatey lib directory
+            // FIRST: Check for broken Chocolatey installation and clean it up
+            if (IsBrokenChocolateyInstallation())
+            {
+                Logger.Warning("Detected broken Chocolatey installation - performing aggressive cleanup...");
+                Logger.WriteSubProgress("Cleaning broken Chocolatey installation", "Removing corrupted files");
+                
+                // This is critical - we MUST clean up broken installations or they prevent proper reinstall
+                bool cleanupSuccessful = await PerformAggressiveChocolateyCleanup();
+                if (!cleanupSuccessful)
+                {
+                    throw new Exception("Failed to clean up broken Chocolatey installation. Cannot proceed with package installations.");
+                }
+            }
+            
+            // Clean up any corrupted Chocolatey lib directory
             CleanupChocolateyLib();
             
             // Find chocolatey executable path using improved method
             string chocoPath = FindChocolateyExecutable();
             
-            var chocoCheck = new ProcessStartInfo
+            // If we have a valid path, test if Chocolatey actually works
+            if (chocoPath != null)
             {
-                FileName = chocoPath,
-                Arguments = "--version",
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true
-            };
-            
-            try
-            {
-                using var checkProcess = Process.Start(chocoCheck);
-                if (checkProcess != null)
+                var chocoCheck = new ProcessStartInfo
                 {
-                    await checkProcess.WaitForExitAsync();
-                    if (checkProcess.ExitCode == 0)
+                    FileName = chocoPath,
+                    Arguments = "--version",
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true
+                };
+                
+                try
+                {
+                    using var checkProcess = Process.Start(chocoCheck);
+                    if (checkProcess != null)
                     {
-                        Logger.Debug("Chocolatey is already installed");
-                        Logger.WriteSubProgress("Chocolatey is already installed");
-                        return; // Chocolatey is available
+                        await checkProcess.WaitForExitAsync();
+                        if (checkProcess.ExitCode == 0)
+                        {
+                            Logger.Debug("Chocolatey is already installed and working");
+                            Logger.WriteSubProgress("Chocolatey is already installed and working");
+                            return; // Chocolatey is available and functional
+                        }
+                        else
+                        {
+                            Logger.Warning($"Chocolatey executable found but not working (exit code: {checkProcess.ExitCode})");
+                        }
                     }
                 }
-            }
-            catch (Exception ex)
-            {
-                Logger.Debug($"Chocolatey check failed: {ex.Message}");
-                // choco.exe not found, need to install
+                catch (Exception ex)
+                {
+                    Logger.Debug($"Chocolatey check failed: {ex.Message}");
+                    // choco.exe found but not functional, need to reinstall
+                }
             }
             
-            Logger.Debug("Chocolatey not found. Installing Chocolatey...");
+            Logger.Debug("Chocolatey not found or not working. Installing Chocolatey...");
             Logger.WriteSubProgress("Installing Chocolatey package manager");
             
             // Install Chocolatey using the official installation method
-            // Use PowerShell with proper elevation for ESP environment
-            string installScript = "Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))";
+            // CRITICAL: Use -Force parameter to ensure clean installation over broken remains
+            string installScript = @"
+                Set-ExecutionPolicy Bypass -Scope Process -Force
+                [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
+                
+                # Force clean installation even if remnants exist
+                $env:CHOCOLATEY_FORCE = 'true'
+                
+                # Download and execute installer
+                iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+                
+                # Verify installation worked
+                if (Test-Path 'C:\ProgramData\chocolatey\bin\choco.exe') {
+                    Write-Host 'Chocolatey installation verified'
+                    exit 0
+                } else {
+                    Write-Error 'Chocolatey installation failed - executable not found'
+                    exit 1
+                }
+            ";
             
             var chocolateyInstall = new ProcessStartInfo
             {
                 FileName = "powershell.exe",
-                Arguments = $"-ExecutionPolicy Bypass -Command \"{installScript}\"",
+                Arguments = $"-ExecutionPolicy Bypass -Command \"{installScript.Replace("\"", "\\\"")}\"",
                 UseShellExecute = true, // Critical for ESP privilege inheritance
                 CreateNoWindow = true,
                 WindowStyle = ProcessWindowStyle.Hidden
@@ -1080,7 +1412,7 @@ namespace BootstrapMate
                 
                 // Verify installation by re-checking with updated paths
                 string newChocoPath = FindChocolateyExecutable();
-                if (newChocoPath != "choco.exe" || await VerifyChocolateyInstallation(newChocoPath))
+                if (newChocoPath != null && await VerifyChocolateyInstallation(newChocoPath))
                 {
                     Logger.Debug($"Chocolatey installation verified at: {newChocoPath}");
                 }
@@ -1178,6 +1510,12 @@ namespace BootstrapMate
             {
                 // Find chocolatey executable path using improved method
                 string chocoPath = FindChocolateyExecutable();
+                
+                if (chocoPath == null)
+                {
+                    Logger.Warning($"Could not locate Chocolatey executable to check package '{packageId}'");
+                    return false; // If no chocolatey, package definitely not installed
+                }
                 
                 // Use 'choco list' to check if package is installed (modern Chocolatey syntax)
                 var startInfo = new ProcessStartInfo
@@ -1326,6 +1664,11 @@ namespace BootstrapMate
 
             // Find chocolatey executable path using improved method
             string chocoPath = FindChocolateyExecutable();
+            
+            if (chocoPath == null)
+            {
+                throw new Exception("Chocolatey executable not found after installation attempt. Cannot proceed with package installation.");
+            }
 
             // In ESP environment, BootstrapMate should already be running elevated
             // Use PowerShell to run Chocolatey and capture output for better error reporting
