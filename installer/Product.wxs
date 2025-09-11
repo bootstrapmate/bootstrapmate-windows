@@ -67,30 +67,13 @@
     <Component Id="SetPathComponent" Guid="D4E5F6A7-B8C9-0123-DEF4-56789012345A">
       <Environment Id="UpdatePath" Name="PATH" Value="[INSTALLDIR]" Permanent="no" Part="last" Action="set" Separator=";" System="yes" />
     </Component>
-
-    <!-- Scheduled Task Component for reliable execution -->
-    <Component Id="ScheduledTaskComponent" Directory="INSTALLDIR" Guid="F5E6D7C8-B9A0-1234-EF56-789012345BCD"
-               Condition="BOOTSTRAP_URL &lt;&gt; &quot;&quot;">
-      <!-- Create a one-time scheduled task that runs 2 minutes after installation -->
-      <RegistryValue Root="HKLM" Key="SOFTWARE\BootstrapMate\ScheduledTask" Name="Created" Value="1" Type="string" />
-    </Component>
-
+    
     <!-- Custom Properties for Bootstrap URL - Set via build parameter -->
     <Property Id="BOOTSTRAP_URL" Value="$(var.BootstrapUrl)" />
     
     <CustomAction Id="RunBootstrapMate" 
                   Directory="INSTALLDIR" 
-                  ExeCommand="installapplications.exe --url &quot;[BOOTSTRAP_URL]&quot; --silent"
-                  Execute="deferred"
-                  Impersonate="no"
-                  Return="ignore"
-                  HideTarget="yes" />
-
-    <!-- Backup: Create scheduled task for ultra-reliable execution (runs 2 minutes after installation) -->
-    <!-- Only runs if primary custom action failed (no logs in ManagedBootstrap) -->
-    <CustomAction Id="CreateBootstrapTask" 
-                  Directory="INSTALLDIR" 
-                  ExeCommand="schtasks.exe /Create /TN BootstrapMate-Auto /TR &quot;powershell -c if(!(ls C:\ProgramData\ManagedBootstrap\logs\*.log -ea 0)){'[INSTALLDIR]installapplications.exe' --url '[BOOTSTRAP_URL]' --silent}&quot; /SC ONCE /ST 23:59 /RU SYSTEM /F"
+                  ExeCommand="cmd.exe /c &quot;powershell.exe -WindowStyle Hidden -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command &quot;&amp;{Start-Process -FilePath '[INSTALLDIR]installapplications.exe' -ArgumentList '--url', '[BOOTSTRAP_URL]', '--silent' -WindowStyle Hidden -CreateNoWindow -PassThru | Out-Null}&quot;&quot;"
                   Execute="deferred"
                   Impersonate="no"
                   Return="ignore"
@@ -101,9 +84,6 @@
       <!-- Primary: Direct execution after files are installed -->
       <Custom Action="RunBootstrapMate" After="InstallFiles" 
               Condition="BOOTSTRAP_URL &lt;&gt; &quot;&quot;" />
-      <!-- Backup: Create scheduled task for reliable execution -->
-      <Custom Action="CreateBootstrapTask" After="RunBootstrapMate" 
-              Condition="BOOTSTRAP_URL &lt;&gt; &quot;&quot;" />
     </InstallExecuteSequence>
 
     <!-- Feature Definition -->
@@ -112,7 +92,6 @@
       <ComponentRef Id="RegistryEntries" />
       <ComponentRef Id="BootstrapRegistryEntries" />
       <ComponentRef Id="SetPathComponent" />
-      <ComponentRef Id="ScheduledTaskComponent" />
     </Feature>
 
   </Package>
