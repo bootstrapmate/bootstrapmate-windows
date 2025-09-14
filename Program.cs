@@ -143,7 +143,7 @@ namespace BootstrapMate
                 {
                     // Immediate clear message without logger initialization noise
                     Console.WriteLine();
-                    Console.WriteLine("❌ ERROR: BootstrapMate must be run as Administrator");
+                    Console.WriteLine("ERROR: BootstrapMate must be run as Administrator");
                     Console.WriteLine();
                     Console.WriteLine("   BootstrapMate requires elevated privileges to:");
                     Console.WriteLine("   • Install packages to Program Files");
@@ -177,7 +177,7 @@ namespace BootstrapMate
                         else
                         {
                             Logger.Error("Failed to obtain administrator privileges. Cannot continue.");
-                            Console.WriteLine("   ❌ Failed to restart with administrator privileges.");
+                            Console.WriteLine("   ERROR: Failed to restart with administrator privileges.");
                             Console.WriteLine("   Please manually run as Administrator or use sudo.");
                             return 1; // Error - elevation failed
                         }
@@ -657,7 +657,7 @@ namespace BootstrapMate
                 CreateNoWindow = true
             };
             
-            Console.WriteLine($"     🔧 Running PowerShell: {arguments}");
+            Console.WriteLine($"     [>] Running PowerShell: {arguments}");
             
             using var process = Process.Start(startInfo);
             if (process != null)
@@ -752,7 +752,7 @@ namespace BootstrapMate
             };
             
             WriteLog($"Running MSI installer: {arguments}");
-            Console.WriteLine($"     📦 Running MSI installer: {arguments}");
+            Console.WriteLine($"     [>] Running MSI installer: {arguments}");
             
             using var process = Process.Start(startInfo);
             if (process != null)
@@ -772,7 +772,7 @@ namespace BootstrapMate
             string arguments = string.Join(" ", args);
             
             WriteLog($"Running executable: {exePath} {arguments}");
-            Console.WriteLine($"     🔧 Running executable: {exePath} {arguments}");
+            Console.WriteLine($"     [>] Running executable: {exePath} {arguments}");
             
             var startInfo = new ProcessStartInfo
             {
@@ -2149,7 +2149,7 @@ namespace BootstrapMate
             try
             {
                 Console.WriteLine("Resetting Chocolatey (complete cleanup)...");
-                Console.WriteLine("⚠️  This will remove ALL Chocolatey packages and force a clean reinstall.");
+                Console.WriteLine("WARNING: This will remove ALL Chocolatey packages and force a clean reinstall.");
                 Console.WriteLine();
                 
                 // Confirm with user (unless running in automated scenarios)
@@ -2221,7 +2221,7 @@ namespace BootstrapMate
                 }
                 else
                 {
-                    Console.WriteLine($"ℹ️  Chocolatey directory does not exist: {chocolateyRoot}");
+                    Console.WriteLine($"INFO: Chocolatey directory does not exist: {chocolateyRoot}");
                 }
                 
                 // Clean up environment variables
@@ -2277,7 +2277,7 @@ namespace BootstrapMate
                 }
                 else
                 {
-                    Console.WriteLine("ℹ️  No Chocolatey installation found to reset.");
+                    Console.WriteLine("INFO: No Chocolatey installation found to reset.");
                 }
                 
                 return 0;
