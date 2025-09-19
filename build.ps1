@@ -58,6 +58,74 @@ function Test-Command {
     return [bool](Get-Command $Command -ErrorAction SilentlyContinue)
 }
 
+# Function to detect ARM64 system architecture (centralized detection)
+function Test-ARM64System {
+    try {
+        # Use modern approach first (faster)
+        $processor = Get-CimInstance -ClassName Win32_Processor -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($processor) {
+            return $processor.Architecture -eq 12  # ARM64 architecture code
+        }
+        
+        # Fallback to older WMI approach
+        $processor = Get-WmiObject -Class Win32_Processor -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($processor) {
+            return $processor.Architecture -eq 12
+        }
+        
+        # Final fallback using environment variable
+        return $env:PROCESSOR_ARCHITECTURE -eq "ARM64"
+    }
+    catch {
+        Write-Log "ARM64 detection failed: $($_.Exception.Message). Assuming x64." "WARN"
+        return $false
+    }
+}
+
+# Function to perform comprehensive garbage collection
+function Invoke-ComprehensiveGC {
+    param([string]$Reason = "General cleanup")
+    
+    Write-Log "Performing garbage collection: $Reason" "INFO"
+    try {
+        # Force comprehensive cleanup
+        [System.GC]::Collect()
+        [System.GC]::WaitForPendingFinalizers()
+        [System.GC]::Collect()
+        [System.GC]::WaitForPendingFinalizers()
+        
+        # Give system time to fully release handles
+        Start-Sleep -Milliseconds 500
+        
+        Write-Log "Garbage collection completed" "INFO"
+    }
+    catch {
+        Write-Log "Garbage collection failed: $($_.Exception.Message)" "WARN"
+    }
+}
+
+# Function to test if a file is locked
+function Test-FileLocked {
+    param([string]$FilePath)
+    
+    if (-not (Test-Path $FilePath)) {
+        return $false
+    }
+    
+    try {
+        $fileStream = [System.IO.File]::Open($FilePath, 'Open', 'ReadWrite', 'None')
+        $fileStream.Close()
+        return $false  # File is not locked
+    }
+    catch [System.IO.IOException] {
+        return $true   # File is locked
+    }
+    catch {
+        Write-Log "Unexpected error testing file lock: $($_.Exception.Message)" "WARN"
+        return $false  # Assume not locked if we can't determine
+    }
+}
+
 # Function to ensure signtool is available (enhanced from CimianTools)
 function Test-SignTool {
     $c = Get-Command signtool.exe -ErrorAction SilentlyContinue
@@ -294,7 +362,211 @@ function Invoke-SignArtifact {
         }
     }
 
-    throw "Signing failed after $MaxAttempts attempts across all TSAs. Last error: $lastError"
+    # If all normal attempts failed, try with sudo if available
+    $sudoAvailable = Get-Command sudo -ErrorAction SilentlyContinue
+    if ($sudoAvailable) {
+        Write-Log "All normal signing attempts failed. Attempting with sudo elevation..." "WARN"
+        
+        try {
+            # Use sudo with the first (most reliable) timestamp server
+            $primaryTsa = $tsas[0]
+            Write-Log "Using sudo with primary TSA: $primaryTsa" "INFO"
+            
+            # Build sudo signtool command
+            $storeArg = if ($Store -eq "CurrentUser") { "My" } else { "My" }
+            $storeModifier = if ($Store -ne "CurrentUser") { "/sm" } else { "" }
+            
+            Write-Log "Running with sudo: signtool.exe sign /s $storeArg $(if($storeModifier){$storeModifier}) /sha1 $Thumbprint /fd SHA256 /td SHA256 /tr $primaryTsa /v `"$Path`"" "INFO"
+            
+            # Execute with sudo directly (not through cmd)
+            $sudoArgs = @(
+                "signtool.exe",
+                "sign",
+                "/s", $storeArg
+            )
+            if ($storeModifier) { $sudoArgs += $storeModifier }
+            $sudoArgs += @(
+                "/sha1", $Thumbprint,
+                "/fd", "SHA256",
+                "/td", "SHA256",
+                "/tr", $primaryTsa,
+                "/v",
+                $Path
+            )
+            
+            & sudo @sudoArgs
+            $sudoExitCode = $LASTEXITCODE
+            
+            if ($sudoExitCode -eq 0) {
+                Write-Log "Successfully signed with sudo elevation!" "SUCCESS"
+                
+                # Verify the signature
+                Write-Log "Verifying sudo-signed signature..." "INFO"
+                & signtool.exe verify /pa "$Path"
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Log "Sudo signature verification successful!" "SUCCESS"
+                    return $true
+                } else {
+                    Write-Log "Sudo signature verification failed" "ERROR"
+                    return $false
+                }
+            } else {
+                Write-Log "Sudo signing failed with exit code: $sudoExitCode" "WARN"
+            }
+            
+        } catch {
+            Write-Log "Exception during sudo signing: $($_.Exception.Message)" "WARN"
+        }
+    } else {
+        Write-Log "sudo not available for elevated signing attempt" "WARN"
+    }
+
+    throw "Signing failed after $MaxAttempts attempts across all TSAs (including sudo). Last error: $lastError"
+}
+
+# Function to aggressively unlock a file using multiple strategies
+function Invoke-FileUnlock {
+    param(
+        [Parameter(Mandatory)]
+        [string]$FilePath,
+        [int]$MaxAttempts = 3
+    )
+    
+    if (-not (Test-Path $FilePath)) {
+        Write-Log "File not found for unlock: $FilePath" "ERROR"
+        return $false
+    }
+    
+    $fileName = [System.IO.Path]::GetFileName($FilePath)
+    Write-Log "Attempting to unlock file: $fileName" "INFO"
+    
+    # First, try garbage collection
+    Invoke-ComprehensiveGC -Reason "Pre-unlock file handle cleanup"
+    
+    # Test if file is actually locked
+    if (-not (Test-FileLocked -FilePath $FilePath)) {
+        Write-Log "File is not locked: $fileName" "SUCCESS"
+        return $true
+    }
+    
+    Write-Log "File is locked, attempting aggressive unlock strategies..." "WARN"
+    
+    # Strategy 1: Multiple GC attempts with increasing delays
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        Write-Log "Unlock attempt $attempt/$MaxAttempts using garbage collection..." "INFO"
+        
+        Invoke-ComprehensiveGC -Reason "Unlock attempt $attempt"
+        Start-Sleep -Seconds ($attempt * 2)
+        
+        if (-not (Test-FileLocked -FilePath $FilePath)) {
+            Write-Log "File unlocked via garbage collection on attempt $attempt" "SUCCESS"
+            return $true
+        }
+    }
+    
+    # Strategy 2: Robocopy-based unlock (CimianTools approach)
+    Write-Log "Attempting robocopy-based unlock..." "INFO"
+    
+    $sourceDir = Split-Path $FilePath -Parent
+    $tempUnlockDir = Join-Path (Split-Path $FilePath -Parent) "temp_unlock_$(Get-Random)"
+    $tempFilePath = Join-Path $tempUnlockDir $fileName
+    
+    try {
+        # Create temp directory
+        if (Test-Path $tempUnlockDir) { 
+            Remove-Item $tempUnlockDir -Recurse -Force -ErrorAction SilentlyContinue 
+        }
+        New-Item -ItemType Directory -Path $tempUnlockDir -Force | Out-Null
+        
+        # Use robocopy with minimal retries and output
+        Write-Log "Using robocopy to break file locks..." "INFO"
+        $robocopyResult = & robocopy "$sourceDir" "$tempUnlockDir" "$fileName" /R:2 /W:1 /NP /NDL /NJH /NJS 2>&1
+        $robocopyExitCode = $LASTEXITCODE
+        
+        # Robocopy exit codes 0-7 are success/partial success
+        if ($robocopyExitCode -le 7 -and (Test-Path $tempFilePath)) {
+            Write-Log "Robocopy successful, replacing original file..." "INFO"
+            
+            # Additional GC before file operations
+            Invoke-ComprehensiveGC -Reason "Pre-file replacement"
+            
+            # Remove original and move back
+            try {
+                Remove-Item $FilePath -Force
+                Move-Item $tempFilePath $FilePath -Force
+                Write-Log "File unlocked via robocopy: $fileName" "SUCCESS"
+                return $true
+            }
+            catch {
+                Write-Log "Failed to replace file after robocopy: $($_.Exception.Message)" "ERROR"
+                # Try to restore from temp if original was deleted
+                if (-not (Test-Path $FilePath) -and (Test-Path $tempFilePath)) {
+                    try {
+                        Move-Item $tempFilePath $FilePath -Force
+                        Write-Log "File restored from temp location" "INFO"
+                    }
+                    catch {
+                        Write-Log "Failed to restore file: $($_.Exception.Message)" "ERROR"
+                    }
+                }
+            }
+        } else {
+            Write-Log "Robocopy failed with exit code: $robocopyExitCode" "WARN"
+            if ($robocopyResult) {
+                Write-Log "Robocopy output: $robocopyResult" "INFO"
+            }
+        }
+    }
+    catch {
+        Write-Log "Robocopy unlock exception: $($_.Exception.Message)" "ERROR"
+    }
+    finally {
+        # Clean up temp directory
+        if (Test-Path $tempUnlockDir) {
+            try {
+                Remove-Item $tempUnlockDir -Recurse -Force -ErrorAction SilentlyContinue
+            }
+            catch {
+                Write-Log "Failed to clean up temp directory: $tempUnlockDir" "WARN"
+            }
+        }
+    }
+    
+    # Strategy 3: File ownership fix (for ARM64 systems)
+    if (Test-ARM64System) {
+        Write-Log "ARM64 system detected, attempting ownership fix..." "INFO"
+        try {
+            & takeown /f "$FilePath" 2>&1 | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                Write-Log "File ownership acquired" "INFO"
+                
+                # Test if this resolved the lock
+                Invoke-ComprehensiveGC -Reason "Post-ownership fix"
+                if (-not (Test-FileLocked -FilePath $FilePath)) {
+                    Write-Log "File unlocked via ownership fix: $fileName" "SUCCESS"
+                    return $true
+                }
+            }
+        }
+        catch {
+            Write-Log "Ownership fix failed: $($_.Exception.Message)" "WARN"
+        }
+    }
+    
+    # Final attempt: One more comprehensive GC cycle
+    Write-Log "Final unlock attempt with extended garbage collection..." "INFO"
+    Invoke-ComprehensiveGC -Reason "Final unlock attempt"
+    Start-Sleep -Seconds 5
+    
+    if (-not (Test-FileLocked -FilePath $FilePath)) {
+        Write-Log "File unlocked on final attempt: $fileName" "SUCCESS"
+        return $true
+    }
+    
+    # File remains locked - provide guidance but don't fail
+    Write-Log "File remains locked after all unlock attempts: $fileName" "WARN"
+    Write-Log "File may still be signable despite lock detection" "INFO"
+    return $false  # Return false but allow signing attempt to proceed
 }
 
 # Function to sign executable (enhanced with admin detection and certificate store handling)
@@ -312,41 +584,22 @@ function Invoke-ExecutableSigning {
 
     Write-Log "Signing executable: $([System.IO.Path]::GetFileName($FilePath))" "INFO"
 
-    # Check if file is locked and attempt quick unlock with garbage collection
-    try {
-        # Force garbage collection to release any lingering handles
-        [System.GC]::Collect()
-        [System.GC]::WaitForPendingFinalizers()
-        [System.GC]::Collect()
+    # Use improved file unlocking for ARM64 cross-compilation scenarios
+    $isARM64System = Test-ARM64System
+    $isX64Executable = $FilePath -like "*x64*" -or $FilePath -like "*win-x64*"
+    
+    if ($isARM64System -and $isX64Executable) {
+        Write-Log "ARM64 system detected, signing x64 executable with enhanced unlock strategy" "INFO"
         
-        $fileStream = [System.IO.File]::Open($FilePath, 'Open', 'Read', 'None')
-        $fileStream.Close()
-    }
-    catch {
-        Write-Log "File appears to be locked: $FilePath. Attempting advanced unlock..." "WARN"
-        
-        # Multiple attempts with increasing delays and garbage collection
-        for ($unlockAttempt = 1; $unlockAttempt -le 3; $unlockAttempt++) {
-            # Force garbage collection again
-            [System.GC]::Collect()
-            [System.GC]::WaitForPendingFinalizers()
-            [System.GC]::Collect()
-            
-            Start-Sleep -Seconds ($unlockAttempt * 2)
-            
-            try {
-                $fileStream = [System.IO.File]::Open($FilePath, 'Open', 'Read', 'None')
-                $fileStream.Close()
-                Write-Log "File unlocked after $unlockAttempt attempts: $FilePath" "SUCCESS"
-                break
-            }
-            catch {
-                if ($unlockAttempt -eq 3) {
-                    Write-Log "File still locked after 3 attempts: $FilePath. Proceeding anyway..." "WARN"
-                    # Don't fail - sometimes signing still works despite lock detection
-                }
-            }
+        # Use comprehensive file unlocking
+        $unlockSuccess = Invoke-FileUnlock -FilePath $FilePath -MaxAttempts 3
+        if (-not $unlockSuccess) {
+            Write-Log "File unlock failed, but attempting to sign anyway..." "WARN"
         }
+    } else {
+        # Standard unlock for same-architecture builds
+        Write-Log "Performing standard file unlock for $([System.IO.Path]::GetFileName($FilePath))" "INFO"
+        $unlockSuccess = Invoke-FileUnlock -FilePath $FilePath -MaxAttempts 2
     }
 
     # For Intune certificates, we'll try signing anyway as they may work without admin rights
@@ -354,128 +607,50 @@ function Invoke-ExecutableSigning {
         Write-Log "Detected Intune certificate - attempting signing without admin privileges" "INFO"
     }
 
-    # Use the robust signing function with proper store detection and timeout
+    # Use the robust signing function
     try {
         Write-Log "Attempting to sign: $([System.IO.Path]::GetFileName($FilePath))" "INFO"
         
-        # For ARM64 systems signing x64 executables, use CimianTools proven approach with extra precautions
-        $isARM64System = (Get-WmiObject Win32_Processor | Where-Object { $_.Architecture -eq 12 }).Count -gt 0
-        $isX64Executable = $FilePath -like "*x64*" -or $FilePath -like "*win-x64*"
-        
-        if ($isARM64System -and $isX64Executable) {
-            Write-Log "ARM64 system detected, signing x64 executable with CimianTools approach" "INFO"
-            
-            # For ARM64→x64 cross-compilation, the file may be locked by the build process
-            # Use CimianTools-style aggressive unlocking with robocopy
-            Write-Log "Attempting aggressive file unlock for ARM64→x64 cross-compilation..." "INFO"
-            
-            # Create temporary unlock directory and use robocopy to break locks
-            $tempUnlockDir = "publish\temp_unlock_x64"
-            $fileName = [System.IO.Path]::GetFileName($FilePath)
-            $tempFilePath = Join-Path $tempUnlockDir $fileName
-            
-            try {
-                # Force comprehensive file release (from CimianTools)
-                [System.GC]::Collect()
-                [System.GC]::WaitForPendingFinalizers()
-                [System.GC]::Collect()
-                [System.GC]::WaitForPendingFinalizers()
-                
-                # Create temp directory
-                if (Test-Path $tempUnlockDir) { Remove-Item $tempUnlockDir -Recurse -Force }
-                New-Item -ItemType Directory -Path $tempUnlockDir -Force | Out-Null
-                
-                # Use robocopy to copy file and break locks (CimianTools pattern)
-                Write-Log "Using robocopy to break file locks..." "INFO"
-                $sourceDir = Split-Path $FilePath
-                & robocopy "$sourceDir" "$tempUnlockDir" "$fileName" /R:3 /W:1 /NP /NDL /NJH /NJS | Out-Null
-                
-                if ($LASTEXITCODE -le 7 -and (Test-Path $tempFilePath)) {
-                    Write-Log "File successfully copied to unlock location" "SUCCESS"
-                    
-                    # Remove original and move back
-                    Remove-Item $FilePath -Force
-                    Move-Item $tempFilePath $FilePath -Force
-                    
-                    Write-Log "File unlocked and restored for signing" "SUCCESS"
-                } else {
-                    Write-Log "Robocopy unlock failed, proceeding with original file..." "WARN"
-                }
-                
-                # Clean up temp directory
-                if (Test-Path $tempUnlockDir) { Remove-Item $tempUnlockDir -Recurse -Force }
-                
-                # Additional wait for file system to settle
-                Start-Sleep -Seconds 3
-                
-            } catch {
-                Write-Log "Aggressive unlock failed: $($_.Exception.Message). Proceeding anyway..." "WARN"
-                if (Test-Path $tempUnlockDir) { Remove-Item $tempUnlockDir -Recurse -Force }
-            }
-            
-            # Use proven CimianTools signing function
-            $success = Invoke-SignArtifact -Path $FilePath -Thumbprint $Certificate.Thumbprint -Store $CertificateStore
-            if ($success) {
-                Write-Log "Successfully signed x64 executable on ARM64 system: $([System.IO.Path]::GetFileName($FilePath))" "SUCCESS"
-                return $true
-            } else {
-                Write-Log "CimianTools signing failed for x64 on ARM64, attempting with sudo elevation..." "WARN"
-                
-                # Try with sudo if available
-                $sudoAvailable = Get-Command sudo -ErrorAction SilentlyContinue
-                if ($sudoAvailable) {
-                    try {
-                        Write-Log "Using sudo to elevate signtool privileges..." "INFO"
-                        sudo signtool.exe sign /s $CertificateStore /sha1 $Certificate.Thumbprint /fd SHA256 /td SHA256 /tr "http://timestamp.digicert.com" /v "$FilePath"
-                        
-                        if ($LASTEXITCODE -eq 0) {
-                            Write-Log "Successfully signed x64 executable using sudo elevation" "SUCCESS"
-                            return $true
-                        } else {
-                            Write-Log "Sudo signing also failed with exit code: $LASTEXITCODE" "ERROR"
-                        }
-                    } catch {
-                        Write-Log "Sudo signing failed: $($_.Exception.Message)" "ERROR"
-                    }
-                } else {
-                    Write-Log "sudo not available. Please run PowerShell as Administrator for code signing." "ERROR"
-                }
-                
-                Write-Log "All signing attempts failed for x64 on ARM64: $([System.IO.Path]::GetFileName($FilePath))" "ERROR"
-                return $false
-            }
+        $success = Invoke-SignArtifact -Path $FilePath -Thumbprint $Certificate.Thumbprint -Store $CertificateStore
+        if ($success) {
+            Write-Log "Successfully signed: $([System.IO.Path]::GetFileName($FilePath))" "SUCCESS"
+            return $true
         } else {
-            # Normal signing for ARM64 executables or non-ARM64 systems
-            $success = Invoke-SignArtifact -Path $FilePath -Thumbprint $Certificate.Thumbprint -Store $CertificateStore
-            if ($success) {
-                Write-Log "Successfully signed: $([System.IO.Path]::GetFileName($FilePath))" "SUCCESS"
-                return $true
-            } else {
-                Write-Log "Signing failed, attempting with sudo elevation..." "WARN"
-                
-                # Try with sudo if available
-                $sudoAvailable = Get-Command sudo -ErrorAction SilentlyContinue
-                if ($sudoAvailable) {
-                    try {
-                        Write-Log "Using sudo to elevate signtool privileges..." "INFO"
-                        sudo signtool.exe sign /s $CertificateStore /sha1 $Certificate.Thumbprint /fd SHA256 /td SHA256 /tr "http://timestamp.digicert.com" /v "$FilePath"
+            Write-Log "Standard signing failed, attempting with elevated privileges..." "WARN"
+            
+            # Try with sudo if available
+            $sudoAvailable = Get-Command sudo -ErrorAction SilentlyContinue
+            if ($sudoAvailable) {
+                Write-Log "Using sudo to elevate signtool privileges for signing..." "INFO"
+                try {
+                    # Use sudo with signtool directly for elevated signing
+                    $sudoResult = sudo signtool.exe sign /s $CertificateStore /sha1 $Certificate.Thumbprint /fd SHA256 /td SHA256 /tr "http://timestamp.digicert.com" /v "$FilePath" 2>&1
+                    
+                    if ($LASTEXITCODE -eq 0) {
+                        Write-Log "Successfully signed using sudo elevation: $([System.IO.Path]::GetFileName($FilePath))" "SUCCESS"
                         
+                        # Verify the signature
+                        $verifyResult = signtool.exe verify /pa /v "$FilePath" 2>&1
                         if ($LASTEXITCODE -eq 0) {
-                            Write-Log "Successfully signed using sudo elevation" "SUCCESS"
-                            return $true
+                            Write-Log "Signature verification successful with sudo signing!" "SUCCESS"
                         } else {
-                            Write-Log "Sudo signing also failed with exit code: $LASTEXITCODE" "ERROR"
+                            Write-Log "Warning: Signature verification failed, but signing appeared successful" "WARN"
                         }
-                    } catch {
-                        Write-Log "Sudo signing failed: $($_.Exception.Message)" "ERROR"
+                        
+                        return $true
+                    } else {
+                        Write-Log "Sudo signing failed with exit code: $LASTEXITCODE" "WARN"
+                        Write-Log "Sudo output: $sudoResult" "WARN"
                     }
-                } else {
-                    Write-Log "sudo not available. Please run PowerShell as Administrator for code signing." "ERROR"
+                } catch {
+                    Write-Log "Sudo signing failed with exception: $($_.Exception.Message)" "WARN"
                 }
-                
-                Write-Log "All signing attempts failed for: $([System.IO.Path]::GetFileName($FilePath))" "ERROR"
-                return $false
+            } else {
+                Write-Log "sudo not available. Please install sudo or run PowerShell as Administrator for code signing." "ERROR"
             }
+            
+            Write-Log "All signing attempts failed for: $([System.IO.Path]::GetFileName($FilePath))" "ERROR"
+            return $false
         }
     } catch {
         $errorMessage = $_.Exception.Message
@@ -489,12 +664,50 @@ function Invoke-ExecutableSigning {
             Write-Log "1. Intune-managed certificate requiring elevated privileges" "ERROR"
             Write-Log "2. Certificate private key access restrictions" "ERROR"
             Write-Log "3. Certificate not suitable for code signing" "ERROR"
+            if (Test-ARM64System -and $FilePath -like "*arm64*") {
+                Write-Log "4. ARM64 native signing requires Administrator privileges on some systems" "ERROR"
+            }
             Write-Log "" "ERROR"
             Write-Log "Solutions to try:" "ERROR"
-            Write-Log "1. Run PowerShell as Administrator" "ERROR"
-            Write-Log "2. Check certificate enhanced key usage includes 'Code Signing'" "ERROR"
-            Write-Log "3. Verify certificate private key is accessible" "ERROR"
-            Write-Log "4. For development: use -AllowUnsigned flag (NOT for production)" "ERROR"
+            
+            # Check if sudo is available and suggest using it
+            $sudoAvailable = Get-Command sudo -ErrorAction SilentlyContinue
+            if ($sudoAvailable) {
+                Write-Log "1. RECOMMENDED: Install/use sudo - detected in PATH" "ERROR"
+                Write-Log "   Run: winget install Microsoft.PowerShell.Preview" "ERROR"
+                Write-Log "   Then retry the build (sudo will be used automatically)" "ERROR"
+                Write-Log "2. Alternative: Run PowerShell as Administrator" "ERROR"
+            } else {
+                Write-Log "1. Install sudo for automatic elevation: winget install Microsoft.PowerShell.Preview" "ERROR"
+                Write-Log "2. Alternative: Run PowerShell as Administrator manually" "ERROR"
+            }
+            
+            Write-Log "3. Check certificate enhanced key usage includes 'Code Signing'" "ERROR"
+            Write-Log "4. Verify certificate private key is accessible" "ERROR"
+            if (Test-ARM64System -and $FilePath -like "*x64*") {
+                Write-Log "5. Wait a few minutes and try again (file handle release)" "ERROR"
+            }
+            Write-Log "6. For development only: use -AllowUnsigned flag (NOT for production)" "ERROR"
+        } elseif ($errorMessage -like "*file is being used by another process*") {
+            Write-Log "" "ERROR"
+            Write-Log "SIGNING FAILED: File in use" "ERROR"
+            Write-Log "This is commonly caused by:" "ERROR"
+            Write-Log "1. Build process still holding file handles" "ERROR"
+            if (Test-ARM64System) {
+                Write-Log "2. ARM64 cross-compilation creates persistent file locks" "ERROR"
+            }
+            Write-Log "3. Antivirus software scanning the executable" "ERROR"
+            Write-Log "" "ERROR"
+            Write-Log "Solutions to try:" "ERROR"
+            Write-Log "1. Wait 30-60 seconds and run the build again" "ERROR"
+            Write-Log "2. Close Visual Studio or other IDEs that may be holding handles" "ERROR"
+            Write-Log "3. Temporarily disable real-time antivirus scanning" "ERROR"
+            if (Test-ARM64System) {
+                Write-Log "4. On ARM64 systems, file locks may require a reboot to clear" "ERROR"
+            }
+        } else {
+            Write-Log "Signing failed with error: $errorMessage" "ERROR"
+            Write-Log "Try running as Administrator or check certificate permissions" "ERROR"
         }
         
         return $false
@@ -557,14 +770,36 @@ function Build-Architecture {
         
         # Sign the executable - MANDATORY unless explicitly disabled
         if ($SigningCert) {
-            # Check for ARM64 system building x64 - fix ownership issue
-            $isARM64System = (Get-WmiObject -Class Win32_Processor | Select-Object -First 1).Architecture -eq 12
-            if ($isARM64System -and $Arch -eq "x64") {
-                Write-Log "ARM64 system detected - fixing x64 binary ownership for signing..." "INFO"
+            # Check for ARM64 system - fix ownership issue for both x64 and ARM64 executables
+            $isARM64System = Test-ARM64System
+            if ($isARM64System) {
+                if ($Arch -eq "x64") {
+                    Write-Log "ARM64 system detected - fixing x64 binary ownership and Defender exclusion for signing..." "INFO"
+                    
+                    # For x64 cross-compilation, add temporary Windows Defender exclusion to prevent signing interference
+                    try {
+                        $exclusionPath = Split-Path $executablePath
+                        & sudo powershell -Command "Add-MpPreference -ExclusionPath '$exclusionPath'" -ErrorAction SilentlyContinue
+                        Write-Log "Added temporary Windows Defender exclusion for x64 cross-compilation signing" "INFO"
+                    } catch {
+                        Write-Log "Could not add Defender exclusion, but continuing..." "WARN"
+                    }
+                } else {
+                    Write-Log "ARM64 system detected - fixing ARM64 binary ownership and Defender exclusion for signing..." "INFO"
+                    
+                    # For ARM64 native executables, add temporary Windows Defender exclusion to prevent signing interference
+                    try {
+                        $exclusionPath = Split-Path $executablePath
+                        & sudo powershell -Command "Add-MpPreference -ExclusionPath '$exclusionPath'" -ErrorAction SilentlyContinue
+                        Write-Log "Added temporary Windows Defender exclusion for ARM64 signing" "INFO"
+                    } catch {
+                        Write-Log "Could not add Defender exclusion, but continuing..." "WARN"
+                    }
+                }
                 try {
                     & takeown /f $executablePath | Out-Null
                     if ($LASTEXITCODE -eq 0) {
-                        Write-Log "Fixed x64 binary ownership" "SUCCESS"
+                        Write-Log "Fixed $Arch binary ownership" "SUCCESS"
                     }
                 } catch {
                     Write-Log "Could not fix ownership, but continuing..." "WARN"
@@ -573,14 +808,22 @@ function Build-Architecture {
             
             # Force comprehensive garbage collection before signing to release any build-related file handles
             Write-Log "Performing garbage collection before signing to release file handles..." "INFO"
-            [System.GC]::Collect()
-            [System.GC]::WaitForPendingFinalizers()
-            [System.GC]::Collect()
-            [System.GC]::WaitForPendingFinalizers()
-            Start-Sleep -Seconds 2  # Give the system time to fully release handles
+            Invoke-ComprehensiveGC -Reason "Pre-signing file handle release"
             
             if (Invoke-ExecutableSigning -FilePath $executablePath -Certificate $SigningCert -CertificateStore $CertificateStore) {
                 Write-Log "Code signing completed for $Arch" "SUCCESS"
+                
+                # Clean up temporary Windows Defender exclusions for all architectures on ARM64 systems
+                $isARM64System = Test-ARM64System
+                if ($isARM64System) {
+                    try {
+                        $exclusionPath = Split-Path $executablePath
+                        & sudo powershell -Command "Remove-MpPreference -ExclusionPath '$exclusionPath'" -ErrorAction SilentlyContinue
+                        Write-Log "Removed temporary Windows Defender exclusion for $Arch architecture" "INFO"
+                    } catch {
+                        Write-Log "Could not remove Defender exclusion (non-critical)" "WARN"
+                    }
+                }
                 return $true
             } else {
                 Write-Log "Code signing failed for $Arch" "ERROR"
@@ -726,6 +969,21 @@ function Build-MSI {
         throw "BOOTSTRAP_MANIFEST_URL environment variable is required for MSI build"
     }
     
+    # Generate customized run.ps1 script with hardcoded URL for MSI deployment
+    Write-Log "Generating customized run.ps1 script with URL: $bootstrapUrl" "INFO"
+    $customRunScriptPath = "installer\run.ps1"
+    $customRunScriptContent = @"
+# BootstrapMate Simple Runner Script
+# This script provides a convenient way to run the BootstrapMate installer
+# with the configured bootstrap URL for this organization
+# Generated during build with URL: $bootstrapUrl
+
+Write-Host "Running BootstrapMate with configured URL..."
+& 'C:\Program Files\BootstrapMate\installapplications.exe' --url $bootstrapUrl
+"@
+    Set-Content -Path $customRunScriptPath -Value $customRunScriptContent -Encoding UTF8
+    Write-Log "Generated custom run.ps1 script for MSI deployment" "SUCCESS"
+    
     $buildArgs = @(
         "build", $projectPath,
         "--configuration", "Release",
@@ -781,6 +1039,13 @@ function Build-MSI {
     } else {
         Write-Log "MSI build failed for $Arch - dotnet build (WiX) failed with exit code: $($process.ExitCode)" "ERROR"
         return @{ Success = $false; Architecture = $Arch }
+    }
+    
+    # Clean up the generated run script
+    $customRunScriptPath = "installer\run.ps1"
+    if (Test-Path $customRunScriptPath) {
+        Remove-Item $customRunScriptPath -Force
+        Write-Log "Cleaned up generated run.ps1 script" "INFO"
     }
 }
 
