@@ -15,7 +15,7 @@
   <Package Name="BootstrapMate"
            Version="$(var.ProductVersion)"
            Manufacturer="Windows Admins Open Source"
-           UpgradeCode="{12345678-1234-5678-9ABC-1234567890AB}"
+           UpgradeCode="{87654321-4321-8765-CBA9-BA0987654321}"
            Language="1033"
            InstallerVersion="500"
            Compressed="yes"
@@ -48,7 +48,7 @@
 
     <!-- Runner Script -->
     <Component Id="BootstrapMateRunnerScript" Directory="INSTALLDIR" Guid="B8F7E6D5-C4A3-9012-B456-789012345CDE">
-      <File Id="RunnerScript" Source="..\installer\run.ps1" />
+      <File Id="RunnerScript" Source="run.ps1" />
     </Component>
 
     <!-- Registry entries for installation tracking AND detection -->
