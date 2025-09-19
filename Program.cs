@@ -16,6 +16,24 @@ namespace BootstrapMate
 {
     class Program
     {
+        // Windows API calls for suppressing system sounds
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        static extern bool Beep(uint dwFreq, uint dwDuration);
+        
+        [DllImport("user32.dll")]
+        static extern bool MessageBeep(uint uType);
+        
+        [DllImport("winmm.dll")]
+        static extern int waveOutSetVolume(int hwo, uint dwVolume);
+        
+        [DllImport("winmm.dll")]
+        static extern int waveOutGetVolume(int hwo, out uint dwVolume);
+        
+        // System sound suppression
+        private static uint originalVolume = 0;
+        private static bool soundsSuppressed = false;
+        
         private static string LogDirectory = @"C:\ProgramData\ManagedBootstrap\logs";
         private static string CacheDirectory = @"C:\ProgramData\ManagedBootstrap\cache";
         
@@ -46,6 +64,49 @@ namespace BootstrapMate
             // Generate version in YYYY.MM.DD.HHMM format based on current build time
             var now = DateTime.Now;
             return $"{now.Year:D4}.{now.Month:D2}.{now.Day:D2}.{now.Hour:D2}{now.Minute:D2}";
+        }
+
+        /// <summary>
+        /// Temporarily suppress system sounds to prevent alert sounds during silent installations
+        /// </summary>
+        static void SuppressSystemSounds()
+        {
+            try
+            {
+                // Get current system volume for restoration later
+                waveOutGetVolume(0, out originalVolume);
+                // Set system volume to 0 (mute system sounds)
+                waveOutSetVolume(0, 0);
+                soundsSuppressed = true;
+                Logger.Debug("System sounds suppressed for silent installation");
+            }
+            catch (Exception ex)
+            {
+                Logger.Debug($"Could not suppress system sounds: {ex.Message}");
+                // Continue anyway - this is not critical
+            }
+        }
+        
+        /// <summary>
+        /// Restore system sounds to original levels
+        /// </summary>
+        static void RestoreSystemSounds()
+        {
+            try
+            {
+                if (soundsSuppressed)
+                {
+                    // Restore original system volume
+                    waveOutSetVolume(0, originalVolume);
+                    soundsSuppressed = false;
+                    Logger.Debug("System sounds restored to original levels");
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Debug($"Could not restore system sounds: {ex.Message}");
+                // Continue anyway - this is not critical
+            }
         }
 
         static bool IsRunningAsAdministrator()
@@ -359,6 +420,9 @@ namespace BootstrapMate
         {
             try
             {
+                // Suppress system sounds for silent installation experience
+                SuppressSystemSounds();
+                
                 // Clear cache if force download is requested
                 if (forceDownload)
                 {
@@ -454,10 +518,15 @@ namespace BootstrapMate
                     // Don't fail the entire process if cache cleanup fails
                 }
                 
+                // Restore system sounds before completion
+                RestoreSystemSounds();
+                
                 return 0;
             }
             catch (Exception ex)
             {
+                // Ensure sounds are restored even on error
+                RestoreSystemSounds();
                 Logger.Error($"Error processing manifest: {ex.Message}");
                 Logger.Debug($"Stack trace: {ex.StackTrace}");
                 Logger.WriteError($"Error processing manifest: {ex.Message}");
@@ -487,11 +556,80 @@ namespace BootstrapMate
             }
         }
         
+        static int GetPackageProcessingPriority(JsonElement package)
+        {
+            try
+            {
+                var type = package.GetProperty("type").GetString()?.ToLowerInvariant() ?? "";
+                var name = package.GetProperty("name").GetString()?.ToLowerInvariant() ?? "";
+                
+                // Priority levels (lower number = higher priority = processed first):
+                
+                // Priority 1: Essential system installers that other packages might depend on
+                if (type == "msi" || type == "exe")
+                {
+                    return 1;
+                }
+                
+                // Priority 2: Chocolatey packages (.nupkg) - these install Chocolatey if needed
+                if (type == "nupkg")
+                {
+                    return 2;
+                }
+                
+                // Priority 3: General PowerShell scripts (but not cleanup scripts)
+                if (type == "powershell" || type == "ps1")
+                {
+                    // Check if this is a cleanup/maintenance script - these should run last
+                    if (name.Contains("cleanup") || name.Contains("clean") || 
+                        name.Contains("wipe") || name.Contains("remove") || 
+                        name.Contains("delete") || name.Contains("purge") ||
+                        name.Contains("nuclear") || name.Contains("maintenance"))
+                    {
+                        return 10; // Run cleanup scripts last
+                    }
+                    
+                    return 3; // Regular PowerShell scripts
+                }
+                
+                // Priority 5: Unknown or other types
+                return 5;
+            }
+            catch
+            {
+                // If we can't determine priority, use default middle priority
+                return 5;
+            }
+        }
+        
         static async Task ProcessPackages(JsonElement packages, string phase, bool forceDownload = false)
         {
             Logger.Debug($"Processing packages for phase: {phase}");
             
-            foreach (var package in packages.EnumerateArray())
+            // Convert JsonElement array to list for sorting
+            var packageList = packages.EnumerateArray().ToList();
+            
+            // Reorder packages to prevent race conditions:
+            // 1. Install packages that might install tools (nupkg, msi, exe) first
+            // 2. Run cleanup/maintenance scripts last to avoid breaking tools needed by other packages
+            var sortedPackages = packageList.OrderBy(pkg => GetPackageProcessingPriority(pkg)).ToList();
+            
+            // Log reordering information if packages were reordered
+            if (!packageList.SequenceEqual(sortedPackages))
+            {
+                Logger.Info("Optimizing package installation order to prevent dependency conflicts");
+                Logger.Debug("Package processing order optimized to prevent dependency conflicts:");
+                for (int i = 0; i < sortedPackages.Count; i++)
+                {
+                    var pkg = sortedPackages[i];
+                    var name = pkg.GetProperty("name").GetString() ?? "Unknown";
+                    var type = pkg.GetProperty("type").GetString() ?? "";
+                    Logger.Debug($"  {i + 1}. {name} (Type: {type})");
+                }
+                Logger.Info("This ensures cleanup scripts run after packages that might need the tools being cleaned");
+            }
+            
+            foreach (var package in sortedPackages)
             {
                 string displayName = "Unknown Package"; // Default value for error handling
                 try
@@ -637,7 +775,7 @@ namespace BootstrapMate
         static async Task RunPowerShellScript(string scriptPath, JsonElement packageInfo)
         {
             var args = GetArguments(packageInfo);
-            string arguments = $"-ExecutionPolicy Bypass -File \"{scriptPath}\" {string.Join(" ", args)}";
+            string arguments = $"-ExecutionPolicy Bypass -NoProfile -File \"{scriptPath}\" {string.Join(" ", args)}";
             
             // Since BootstrapMate is already running as admin, all PowerShell scripts should inherit admin privileges
             // This ensures chocolatey and other system installers work properly
@@ -739,7 +877,7 @@ namespace BootstrapMate
         static async Task RunMsiInstaller(string msiPath, JsonElement packageInfo)
         {
             var args = GetArguments(packageInfo);
-            string arguments = $"/i \"{msiPath}\" /quiet /norestart {string.Join(" ", args)}";
+            string arguments = $"/i \"{msiPath}\" /qn /norestart {string.Join(" ", args)}";
             
             var startInfo = new ProcessStartInfo
             {
@@ -817,7 +955,7 @@ namespace BootstrapMate
             }
         }
         
-        static string FindChocolateyExecutable()
+        static string? FindChocolateyExecutable()
         {
             // Try common Chocolatey installation paths in order of preference
             string[] candidatePaths = {
@@ -1091,11 +1229,11 @@ namespace BootstrapMate
                     Logger.Warning($"Could not clean environment variables: {ex.Message}");
                 }
                 
-                // Step 3: CRITICAL - Complete nuclear removal of Chocolatey directory
+                // Step 3: CRITICAL - Complete removal of Chocolatey directory
                 // This MUST succeed or Chocolatey installer will think it's already installed
                 if (Directory.Exists(chocolateyRoot))
                 {
-                    Logger.Warning($"CRITICAL: Performing nuclear removal of broken Chocolatey at: {chocolateyRoot}");
+                    Logger.Warning($"CRITICAL: Performing complete removal of broken Chocolatey at: {chocolateyRoot}");
                     Logger.Info("This is necessary because Chocolatey installer detects existing folder and skips installation");
                     
                     bool removalSuccess = false;
@@ -1123,7 +1261,7 @@ namespace BootstrapMate
                         var psProcess = new ProcessStartInfo
                         {
                             FileName = "powershell.exe",
-                            Arguments = $"-ExecutionPolicy Bypass -Command \"{psCommand}\"",
+                            Arguments = $"-ExecutionPolicy Bypass -NoProfile -Command \"{psCommand}\"",
                             UseShellExecute = true, // Run elevated
                             CreateNoWindow = true,
                             WindowStyle = ProcessWindowStyle.Hidden
@@ -1140,13 +1278,13 @@ namespace BootstrapMate
                         
                         if (!Directory.Exists(chocolateyRoot))
                         {
-                            Logger.Info("✅ PowerShell nuclear removal successful");
+                            Logger.Info("✅ PowerShell complete removal successful");
                             removalSuccess = true;
                         }
                     }
                     catch (Exception ex)
                     {
-                        Logger.Warning($"PowerShell nuclear removal failed: {ex.Message}");
+                        Logger.Warning($"PowerShell complete removal failed: {ex.Message}");
                     }
                     
                     // Method 2: C# Directory.Delete with multiple retries
@@ -1275,19 +1413,19 @@ namespace BootstrapMate
                 
                 if (isCleanedUp)
                 {
-                    Logger.Info("✅ Nuclear Chocolatey cleanup completed successfully");
+                    Logger.Info("✅ Complete Chocolatey cleanup completed successfully");
                     Logger.Info("Chocolatey installer should now detect a clean system and perform full installation");
                     return true;
                 }
                 else
                 {
-                    Logger.Error("❌ Nuclear Chocolatey cleanup failed - installation artifacts still present");
+                    Logger.Error("❌ Complete Chocolatey cleanup failed - installation artifacts still present");
                     return false;
                 }
             }
             catch (Exception ex)
             {
-                Logger.Error($"Exception during nuclear Chocolatey cleanup: {ex.Message}");
+                Logger.Error($"Exception during complete Chocolatey cleanup: {ex.Message}");
                 return false;
             }
         }
@@ -1309,12 +1447,22 @@ namespace BootstrapMate
                     throw new Exception("Failed to clean up broken Chocolatey installation. Cannot proceed with package installations.");
                 }
             }
+            else
+            {
+                // Check if Chocolatey directory is completely missing - might indicate recent cleanup
+                string chocolateyRoot = @"C:\ProgramData\chocolatey";
+                if (!Directory.Exists(chocolateyRoot))
+                {
+                    Logger.Debug("Chocolatey directory does not exist - may have been cleaned by previous package");
+                    Logger.Info("No existing Chocolatey installation found - will perform fresh installation");
+                }
+            }
             
             // Clean up any corrupted Chocolatey lib directory
             CleanupChocolateyLib();
             
             // Find chocolatey executable path using improved method
-            string chocoPath = FindChocolateyExecutable();
+            string? chocoPath = FindChocolateyExecutable();
             
             // If we have a valid path, test if Chocolatey actually works
             if (chocoPath != null)
@@ -1374,7 +1522,7 @@ namespace BootstrapMate
                     Write-Host 'Chocolatey installation verified'
                     exit 0
                 } else {
-                    Write-Error 'Chocolatey installation failed - executable not found'
+                    Write-Host 'Chocolatey installation failed - executable not found' -ForegroundColor Red
                     exit 1
                 }
             ";
@@ -1382,7 +1530,7 @@ namespace BootstrapMate
             var chocolateyInstall = new ProcessStartInfo
             {
                 FileName = "powershell.exe",
-                Arguments = $"-ExecutionPolicy Bypass -Command \"{installScript.Replace("\"", "\\\"")}\"",
+                Arguments = $"-ExecutionPolicy Bypass -NoProfile -Command \"{installScript.Replace("\"", "\\\"")}\"",
                 UseShellExecute = true, // Critical for ESP privilege inheritance
                 CreateNoWindow = true,
                 WindowStyle = ProcessWindowStyle.Hidden
@@ -1411,14 +1559,16 @@ namespace BootstrapMate
                 await Task.Delay(2000);
                 
                 // Verify installation by re-checking with updated paths
-                string newChocoPath = FindChocolateyExecutable();
+                string? newChocoPath = FindChocolateyExecutable();
                 if (newChocoPath != null && await VerifyChocolateyInstallation(newChocoPath))
                 {
                     Logger.Debug($"Chocolatey installation verified at: {newChocoPath}");
+                    Logger.WriteSubProgress("Chocolatey installation verified successfully");
                 }
                 else
                 {
-                    Logger.Warning("Chocolatey installation could not be verified, but proceeding anyway");
+                    Logger.Warning($"Chocolatey installation verification failed. Expected location: C:\\ProgramData\\chocolatey\\bin\\choco.exe");
+                    Logger.Warning("Installation will proceed but may encounter issues. Consider manually checking Chocolatey installation.");
                 }
             }
         }
@@ -1463,11 +1613,11 @@ namespace BootstrapMate
                 // Check for Chocolatey installation paths and add them if missing
                 List<string> additionalPaths = new List<string>();
                 
-                // Common Chocolatey installation paths
+                // Common Chocolatey installation paths - prioritize by most common
                 string[] chocolateyPaths = {
                     @"C:\ProgramData\chocolatey\bin",
-                    @"C:\Chocolatey\bin",
-                    Environment.GetEnvironmentVariable("ChocolateyInstall") + @"\bin"
+                    Environment.GetEnvironmentVariable("ChocolateyInstall") + @"\bin",
+                    @"C:\Chocolatey\bin"
                 };
                 
                 foreach (string chocoPath in chocolateyPaths)
@@ -1482,9 +1632,17 @@ namespace BootstrapMate
                             if (!combinedCurrentPath.ToLowerInvariant().Contains(chocoPath.ToLowerInvariant()))
                             {
                                 additionalPaths.Add(chocoPath);
-                                Logger.Debug($"Adding Chocolatey path to PATH: {chocoPath}");
+                                Logger.Debug($"Adding Chocolatey path to environment PATH: {chocoPath}");
+                            }
+                            else
+                            {
+                                Logger.Debug($"Chocolatey path already in PATH: {chocoPath}");
                             }
                             break; // Found a working chocolatey installation
+                        }
+                        else
+                        {
+                            Logger.Debug($"Chocolatey directory exists but executable missing: {chocoPath}");
                         }
                     }
                 }
@@ -1495,12 +1653,28 @@ namespace BootstrapMate
                 // Update the current process PATH
                 Environment.SetEnvironmentVariable("PATH", combinedPath, EnvironmentVariableTarget.Process);
                 
-                Logger.Debug($"Environment PATH refreshed with {additionalPaths.Count} additional Chocolatey paths");
+                if (additionalPaths.Count > 0)
+                {
+                    Logger.Debug($"Environment PATH updated with {additionalPaths.Count} Chocolatey paths");
+                }
+                else
+                {
+                    // Try to find chocolatey using FindChocolateyExecutable to provide more info
+                    string? foundPath = FindChocolateyExecutable();
+                    if (foundPath != null)
+                    {
+                        Logger.Debug("Chocolatey executable found via direct search - PATH already correct");
+                    }
+                    else
+                    {
+                        Logger.Debug("No Chocolatey installation found to add to PATH");
+                    }
+                }
             }
             catch (Exception ex)
             {
-                Logger.Warning($"Could not refresh PATH environment variable: {ex.Message}");
-                // Continue anyway - chocolatey might still work
+                Logger.Warning($"Failed to refresh PATH environment variable: {ex.Message}");
+                // Continue anyway - chocolatey might still work if already in PATH
             }
         }
         
@@ -1509,11 +1683,11 @@ namespace BootstrapMate
             try
             {
                 // Find chocolatey executable path using improved method
-                string chocoPath = FindChocolateyExecutable();
+                string? chocoPath = FindChocolateyExecutable();
                 
                 if (chocoPath == null)
                 {
-                    Logger.Warning($"Could not locate Chocolatey executable to check package '{packageId}'");
+                    Logger.Debug($"Chocolatey executable not found - package '{packageId}' assumed not installed");
                     return false; // If no chocolatey, package definitely not installed
                 }
                 
@@ -1528,7 +1702,7 @@ namespace BootstrapMate
                     CreateNoWindow = true
                 };
                 
-                Logger.Debug($"Checking if package '{packageId}' is installed: {chocoPath} {startInfo.Arguments}");
+                Logger.Debug($"Checking if package '{packageId}' is installed using: {chocoPath}");
                 
                 using var process = Process.Start(startInfo);
                 if (process != null)
@@ -1561,7 +1735,7 @@ namespace BootstrapMate
                     {
                         string error = await process.StandardError.ReadToEndAsync();
                         string output = await process.StandardOutput.ReadToEndAsync();
-                        Logger.Warning($"chocolatey list command failed with exit code {process.ExitCode}");
+                        Logger.Warning($"Chocolatey list command failed with exit code {process.ExitCode}");
                         Logger.Debug($"Chocolatey list stderr: {error}");
                         Logger.Debug($"Chocolatey list stdout: {output}");
                     }
@@ -1572,7 +1746,7 @@ namespace BootstrapMate
             }
             catch (Exception ex)
             {
-                Logger.Warning($"Could not check if package '{packageId}' is installed: {ex.Message}");
+                Logger.Warning($"Error checking if package '{packageId}' is installed: {ex.Message}");
                 // If we can't determine, assume it's not installed and try to install
                 return false;
             }
@@ -1652,32 +1826,41 @@ namespace BootstrapMate
             
             // Use proper chocolatey syntax with smart install/upgrade logic
             // Always use --force (-f) to handle conflicts and ensure package state
+            // Add --no-progress, --quiet, and --limit-output to suppress sounds and visual feedback
             string arguments;
             if (!string.IsNullOrEmpty(packageVersion))
             {
-                arguments = $"{action} \"{packageId}\" --source=\"{packageDir}\" --version=\"{packageVersion}\" -y --ignore-checksums --acceptlicense --confirm --force {string.Join(" ", args)}";
+                arguments = $"{action} \"{packageId}\" --source=\"{packageDir}\" --version=\"{packageVersion}\" -y --ignore-checksums --acceptlicense --confirm --force --no-progress --quiet --limit-output {string.Join(" ", args)}";
             }
             else
             {
-                arguments = $"{action} \"{packageId}\" --source=\"{packageDir}\" -y --ignore-checksums --acceptlicense --confirm --force {string.Join(" ", args)}";
+                arguments = $"{action} \"{packageId}\" --source=\"{packageDir}\" -y --ignore-checksums --acceptlicense --confirm --force --no-progress --quiet --limit-output {string.Join(" ", args)}";
             }
 
             // Find chocolatey executable path using improved method
-            string chocoPath = FindChocolateyExecutable();
+            string? chocoPath = FindChocolateyExecutable();
             
             if (chocoPath == null)
             {
-                throw new Exception("Chocolatey executable not found after installation attempt. Cannot proceed with package installation.");
+                Logger.Error("CRITICAL: Chocolatey executable not found after installation attempt");
+                Logger.Error("Expected locations checked:");
+                Logger.Error("  - C:\\ProgramData\\chocolatey\\bin\\choco.exe");
+                Logger.Error("  - C:\\Chocolatey\\bin\\choco.exe");
+                Logger.Error("  - %ChocolateyInstall%\\bin\\choco.exe");
+                throw new Exception("Chocolatey executable not found. Installation may have failed or PATH not properly configured.");
             }
+            
+            Logger.Debug($"Using Chocolatey executable: {chocoPath}");
 
             // In ESP environment, BootstrapMate should already be running elevated
             // Use PowerShell to run Chocolatey and capture output for better error reporting
-            string powershellCommand = $"& '{chocoPath}' {arguments}";
+            // Suppress PowerShell host notifications and sounds
+            string powershellCommand = $"$host.UI.RawUI.WindowTitle = 'Silent'; $ProgressPreference = 'SilentlyContinue'; $ErrorActionPreference = 'Continue'; & '{chocoPath}' {arguments}";
             
             var startInfo = new ProcessStartInfo
             {
                 FileName = "powershell.exe",
-                Arguments = $"-ExecutionPolicy Bypass -Command \"{powershellCommand}\"",
+                Arguments = $"-ExecutionPolicy Bypass -NoProfile -Command \"{powershellCommand}\"",
                 UseShellExecute = false, // Changed to false to capture output
                 CreateNoWindow = true,
                 WindowStyle = ProcessWindowStyle.Hidden,
@@ -1685,7 +1868,7 @@ namespace BootstrapMate
                 RedirectStandardError = true
             };
             
-            Logger.Debug($"Running Chocolatey via PowerShell: {powershellCommand}");
+            Logger.Debug($"Executing Chocolatey command: {chocoPath} {arguments}");
             Logger.WriteSubProgress("Running Chocolatey", $"{action} command");
             
             using var process = Process.Start(startInfo);
@@ -1725,15 +1908,28 @@ namespace BootstrapMate
                     
                     if (!string.IsNullOrWhiteSpace(stdout))
                     {
-                        // Include full stdout for failed commands
+                        // Include relevant stdout for failed commands
                         errorParts.Add($"STDOUT: {stdout.Trim()}");
                     }
                     
+                    // Add diagnostic information about the executable used
+                    errorParts.Add($"Executable used: {chocoPath}");
+                    errorParts.Add($"Arguments: {arguments}");
+                    
                     string errorDetails = errorParts.Count > 0 ? $" - {string.Join(" | ", errorParts)}" : "";
                     
-                    Logger.Error($"Chocolatey install failed: {packageId} (exit code {process.ExitCode}){errorDetails}");
+                    Logger.Error($"Chocolatey {action} failed for package '{packageId}' with exit code {process.ExitCode}");
+                    Logger.Error($"Full command: {chocoPath} {arguments}");
                     
-                    throw new Exception($"Chocolatey install failed with exit code: {process.ExitCode}{errorDetails}");
+                    // Check for common error patterns and provide helpful suggestions
+                    if (stderr.Contains("not recognized") || stderr.Contains("CommandNotFoundException"))
+                    {
+                        Logger.Error("ERROR: Chocolatey executable not recognized by PowerShell");
+                        Logger.Error($"Verify that Chocolatey is properly installed at: {chocoPath}");
+                        Logger.Error("Try running 'refreshenv' or restart the terminal if running manually");
+                    }
+                    
+                    throw new Exception($"Chocolatey {action} failed with exit code {process.ExitCode}: {errorDetails}");
                 }
                 
                 // Log successful installation details if verbose
@@ -2016,7 +2212,7 @@ namespace BootstrapMate
                 // 3. Run chocolatey cache clear command if available
                 try
                 {
-                    string chocoPath = FindChocolateyExecutable();
+                    string? chocoPath = FindChocolateyExecutable();
                     var startInfo = new ProcessStartInfo
                     {
                         FileName = chocoPath,
