@@ -46,6 +46,11 @@
       <File Id="BootstrapMateExe" Source="$(var.BIN_DIR)\installapplications.exe" />
     </Component>
 
+    <!-- Runner Script -->
+    <Component Id="BootstrapMateRunnerScript" Directory="INSTALLDIR" Guid="B8F7E6D5-C4A3-9012-B456-789012345CDE">
+      <File Id="RunnerScript" Source="..\installer\run.ps1" />
+    </Component>
+
     <!-- Registry entries for installation tracking AND detection -->
     <Component Id="RegistryEntries" Directory="INSTALLDIR" Guid="E5F6A7B8-C9D0-1234-EF56-789012345ABC">
       <RegistryValue Root="HKLM" Key="SOFTWARE\BootstrapMate" Name="InstallPath" Value="[INSTALLDIR]" Type="string" />
@@ -73,7 +78,7 @@
     
     <CustomAction Id="RunBootstrapMate" 
                   Directory="INSTALLDIR" 
-                  ExeCommand="cmd.exe /c &quot;powershell.exe -WindowStyle Hidden -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command &quot;&amp;{Start-Process -FilePath '[INSTALLDIR]installapplications.exe' -ArgumentList '--url', '[BOOTSTRAP_URL]', '--silent' -WindowStyle Hidden -CreateNoWindow -PassThru | Out-Null}&quot;&quot;"
+                  ExeCommand="powershell.exe -WindowStyle Hidden -NoProfile -ExecutionPolicy Bypass -File &quot;[INSTALLDIR]run.ps1&quot;"
                   Execute="deferred"
                   Impersonate="no"
                   Return="ignore"
@@ -89,6 +94,7 @@
     <!-- Feature Definition -->
     <Feature Id="DefaultFeature" Level="1">
       <ComponentRef Id="BootstrapMateExecutable" />
+      <ComponentRef Id="BootstrapMateRunnerScript" />
       <ComponentRef Id="RegistryEntries" />
       <ComponentRef Id="BootstrapRegistryEntries" />
       <ComponentRef Id="SetPathComponent" />
