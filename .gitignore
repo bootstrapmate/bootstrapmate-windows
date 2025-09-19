@@ -554,3 +554,6 @@ lcov.info
 *.prof
 *.trace
 IntuneWinAppUtil.exe
+
+# Generated build files
+run.ps1
