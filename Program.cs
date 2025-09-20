@@ -299,11 +299,12 @@ namespace BootstrapMate
                         Console.WriteLine("  installapplications.exe --url https://example.com/bootstrap/bootstrapmate.json");
                         Console.WriteLine();
                         Console.WriteLine("Features:");
-                        Console.WriteLine("  - Supports multiple package types: MSI, EXE, PowerShell, Chocolatey (.nupkg)");
+                        Console.WriteLine("  - Supports multiple package types: MSI, EXE, PowerShell, Chocolatey (.nupkg), sbin-installer (.pkg)");
                         Console.WriteLine("  - Handles setupassistant (OOBE) and userland installation phases");
                         Console.WriteLine("  - Admin privilege escalation for elevated packages");
                         Console.WriteLine("  - Architecture-specific conditional installation");
                         Console.WriteLine("  - Registry-based status tracking for detection scripts");
+                        Console.WriteLine("  - Primary installer: sbin-installer (lightweight, fast)");
                         return 0;
 
                     case "--status":
@@ -624,7 +625,21 @@ namespace BootstrapMate
                     break;
                     
                 case "nupkg":
-                    await RunChocolateyInstall(filePath, packageInfo);
+                    // Try sbin-installer first, fallback to Chocolatey
+                    if (IsSbinInstallerAvailable())
+                    {
+                        await RunSbinInstall(filePath, packageInfo);
+                    }
+                    else
+                    {
+                        Logger.WriteSubProgress("sbin-installer not found", "Using Chocolatey fallback");
+                        await RunChocolateyInstall(filePath, packageInfo);
+                    }
+                    break;
+                    
+                case "pkg":
+                    // pkg format is native to sbin-installer
+                    await RunSbinInstall(filePath, packageInfo);
                     break;
                     
                 default:
@@ -877,7 +892,67 @@ namespace BootstrapMate
             
             // Instead of falling back to "choco.exe", return null to indicate no executable found
             Logger.Warning("Could not locate Chocolatey executable anywhere on the system");
+            return null!; // Fixed nullable warning
+        }
+
+        static string? FindSbinInstaller()
+        {
+            // Primary installation path for sbin-installer
+            string primaryPath = @"C:\Program Files\sbin\installer.exe";
+            
+            if (File.Exists(primaryPath))
+            {
+                Logger.Debug($"Found sbin-installer at primary location: {primaryPath}");
+                return primaryPath;
+            }
+            
+            // Try PATH resolution
+            try
+            {
+                var startInfo = new ProcessStartInfo
+                {
+                    FileName = "where.exe",
+                    Arguments = "installer.exe",
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true
+                };
+                
+                using var process = Process.Start(startInfo);
+                if (process != null)
+                {
+                    process.WaitForExit(5000); // 5 second timeout
+                    if (process.ExitCode == 0)
+                    {
+                        string output = process.StandardOutput.ReadToEnd().Trim();
+                        if (!string.IsNullOrEmpty(output))
+                        {
+                            var lines = output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+                            foreach (var line in lines)
+                            {
+                                if (File.Exists(line) && line.Contains("sbin", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    Logger.Debug($"Found sbin-installer via WHERE command: {line}");
+                                    return line;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Debug($"WHERE command failed for sbin-installer: {ex.Message}");
+            }
+            
+            Logger.Debug("sbin-installer not found on the system");
             return null;
+        }
+
+        static bool IsSbinInstallerAvailable()
+        {
+            return FindSbinInstaller() != null;
         }
         
         static bool IsBrokenChocolateyInstallation()
@@ -1663,7 +1738,7 @@ namespace BootstrapMate
             }
 
             // Find chocolatey executable path using improved method
-            string chocoPath = FindChocolateyExecutable();
+            string? chocoPath = FindChocolateyExecutable();
             
             if (chocoPath == null)
             {
@@ -1746,6 +1821,110 @@ namespace BootstrapMate
                         Logger.Debug($"Chocolatey success: {string.Join(", ", successLines.Select(l => l.Trim()))}");
                     }
                 }
+            }
+        }
+
+        static async Task RunSbinInstall(string packagePath, JsonElement packageInfo)
+        {
+            var args = GetArguments(packageInfo);
+            
+            // Find sbin-installer executable
+            string? sbinPath = FindSbinInstaller();
+            
+            if (sbinPath == null)
+            {
+                throw new Exception("sbin-installer executable not found. Cannot proceed with package installation.");
+            }
+            
+            // Determine target from package info, or use default "/" (matching sbin-installer default)
+            string target = "/"; // Default to system root, same as sbin-installer default
+            
+            if (packageInfo.TryGetProperty("target", out var targetProperty))
+            {
+                string? specifiedTarget = targetProperty.GetString();
+                if (!string.IsNullOrEmpty(specifiedTarget))
+                {
+                    target = specifiedTarget;
+                }
+                // If target is specified but empty/null, keep default "/"
+            }
+            
+            // Build sbin-installer command: installer --pkg <path> --target <target> [args]
+            var allArgs = new List<string>
+            {
+                "--pkg", $"\"{packagePath}\"",
+                "--target", target
+            };
+            
+            // Add any additional arguments from the package info
+            allArgs.AddRange(args);
+            
+            string arguments = string.Join(" ", allArgs);
+            
+            Logger.Debug($"Running sbin-installer: {sbinPath} {arguments}");
+            Logger.WriteSubProgress("Running sbin-installer", Path.GetFileName(packagePath));
+            
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = sbinPath,
+                Arguments = arguments,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+            
+            using var process = Process.Start(startInfo);
+            if (process != null)
+            {
+                // Capture output for better error reporting
+                var outputTask = process.StandardOutput.ReadToEndAsync();
+                var errorTask = process.StandardError.ReadToEndAsync();
+                
+                await process.WaitForExitAsync();
+                
+                var stdout = await outputTask;
+                var stderr = await errorTask;
+                
+                Logger.Debug($"sbin-installer completed with exit code: {process.ExitCode}");
+                
+                // Always log output for debugging
+                if (!string.IsNullOrWhiteSpace(stdout))
+                {
+                    Logger.Debug($"sbin-installer stdout: {stdout.Trim()}");
+                }
+                
+                if (!string.IsNullOrWhiteSpace(stderr))
+                {
+                    Logger.Debug($"sbin-installer stderr: {stderr.Trim()}");
+                }
+                
+                if (process.ExitCode != 0)
+                {
+                    // Enhanced error message with all available details
+                    var errorParts = new List<string>();
+                    
+                    if (!string.IsNullOrWhiteSpace(stderr))
+                    {
+                        errorParts.Add($"STDERR: {stderr.Trim()}");
+                    }
+                    
+                    if (!string.IsNullOrWhiteSpace(stdout))
+                    {
+                        errorParts.Add($"STDOUT: {stdout.Trim()}");
+                    }
+                    
+                    string errorDetails = errorParts.Count > 0 ? $" - {string.Join(" | ", errorParts)}" : "";
+                    string packageName = Path.GetFileName(packagePath);
+                    
+                    Logger.Error($"sbin-installer install failed: {packageName} (exit code {process.ExitCode}){errorDetails}");
+                    
+                    throw new Exception($"sbin-installer install failed with exit code: {process.ExitCode}{errorDetails}");
+                }
+                
+                // Log success information
+                Logger.Debug($"sbin-installer successfully installed: {Path.GetFileName(packagePath)}");
+                Logger.WriteSubProgress("Installation completed", "Success");
             }
         }
         
