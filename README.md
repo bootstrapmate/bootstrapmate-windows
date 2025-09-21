@@ -5,7 +5,8 @@ A lightweight bootstrapping tool for Windows device provisioning that downloads 
 ## Features
 
 - **Dual Phase Support**: Setup Assistant (pre-login/ESP) and Userland (post-login)
-- **Package Types**: MSI, EXE, PowerShell scripts, Chocolatey packages (.nupkg)
+- **Package Types**: MSI, EXE, PowerShell scripts, Chocolatey packages (.nupkg), sbin-installer packages (.pkg)
+- **Primary Package Manager**: sbin-installer (lightweight, fast, no cache management) with Chocolatey fallback
 - **Registry Status Tracking**: Provides completion status for Intune detection scripts
 - **Architecture Support**: x64 and ARM64 with conditional installation
 - **Admin Escalation**: Automatic privilege elevation for packages requiring admin rights
@@ -229,6 +230,25 @@ BootstrapMate creates detailed logs:
 2. **Certificate Issues**: Ensure your code signing certificate is deployed via Intune
 3. **Network Connectivity**: Manifest URL must be accessible during ESP
 4. **Permission Issues**: BootstrapMate automatically elevates to administrator
+5. **sbin-installer Not Found**: Deploy sbin-installer first if using .nupkg/.pkg packages for optimal performance
+
+### sbin-installer Troubleshooting
+
+**Check Installation:**
+```powershell
+# Verify sbin-installer is available
+if (Test-Path "C:\Program Files\sbin\installer.exe") {
+    Write-Host "sbin-installer is installed"
+    & "C:\Program Files\sbin\installer.exe" --vers
+} else {
+    Write-Host "sbin-installer not found - will use Chocolatey fallback"
+}
+```
+
+**Common sbin-installer Issues:**
+- **Package Format**: Ensure .nupkg/.pkg files are valid ZIP archives
+- **Permissions**: Verify BootstrapMate runs as administrator
+- **Target Path**: Check target path permissions for installation
 
 ### Status Checking
 
@@ -267,10 +287,11 @@ BootstrapMate for Windows enables IT administrators to:
 
 - **Bootstrap software deployment** during Windows Setup Assistant (OOBE)
 - **Orchestrate package installation** from any web-accessible repository
-- **Support multiple package formats** (MSI, EXE, PowerShell, Chocolatey, MSIX)
+- **Support multiple package formats** (MSI, EXE, PowerShell, Chocolatey, sbin-installer, MSIX)
 - **Work with any MDM solution** (Intune, JAMF Pro, Workspace ONE, etc.)
 - **Provide real-time feedback** to users and administrators
 - **Handle dependencies and ordering** automatically
+- **Leverage sbin-installer** for fast, lightweight package management
 
 ## How It Works
 
@@ -317,36 +338,122 @@ $installCommand = "installapplications.exe --repo https://yourrepo.com/packages 
 
 ```json
 {
-  "packages": [
+  "setupassistant": [
     {
       "name": "Microsoft Teams",
+      "file": "teams.msi",
       "type": "msi",
       "url": "https://repo.com/packages/teams.msi",
-      "arguments": "/quiet ALLUSERS=1",
-      "phase": "setupassistant",
-      "required": true
+      "arguments": ["/quiet", "ALLUSERS=1"]
     },
     {
+      "name": "System Utility",
+      "file": "system-utility-1.0.0.nupkg",
+      "type": "nupkg",
+      "url": "https://repo.com/packages/system-utility-1.0.0.nupkg",
+      "arguments": ["--verbose"]
+    }
+  ],
+  "userland": [
+    {
       "name": "Adobe Reader",
-      "type": "exe", 
+      "file": "reader.exe", 
+      "type": "exe",
       "url": "https://repo.com/packages/reader.exe",
-      "arguments": "/S",
-      "phase": "userland",
-      "dependencies": ["Microsoft Teams"]
+      "arguments": ["/S"]
+    },
+    {
+      "name": "User App",
+      "file": "userapp-2.0.0.pkg",
+      "type": "pkg",
+      "url": "https://repo.com/packages/userapp-2.0.0.pkg",
+      "target": "CurrentUserHomeDirectory",
+      "arguments": ["--verbose"]
     }
   ]
 }
 ```
+
+*Note: For .nupkg and .pkg packages, `target` defaults to `"/"` (system root) when omitted.*
 
 ### 3. Supported Package Types
 
 - **MSI**: Windows Installer packages
 - **EXE**: Executable installers
 - **PowerShell**: `.ps1` scripts with elevation
-- **Chocolatey**: `.nupkg` packages
+- **nupkg**: NuGet packages via sbin-installer (primary) or Chocolatey (fallback)
+- **pkg**: sbin-installer native packages (lightweight, fast, no cache)
 - **MSIX**: Modern Windows packages
 - **Registry**: Registry modifications
 - **File Copy**: Direct file deployment
+
+#### Package Manager Priority
+
+For `.nupkg` packages:
+1. **sbin-installer**: Primary choice (if available at `C:\Program Files\sbin\installer.exe`)
+2. **Chocolatey**: Fallback option (automatically installs if needed)
+
+For `.pkg` packages:
+1. **sbin-installer**: Native format (requires sbin-installer to be installed)
+
+## sbin-installer Integration
+
+BootstrapMate includes out of the box support for [sbin-installer](https://github.com/windowsadmins/sbin-installer), a lightweight alternative to `choco`.
+
+### Why sbin-installer?
+
+**Advantages over Chocolatey:**
+- **2-4x faster** package installations
+- **No cache management** - direct package execution  
+- **90% less disk usage** - no persistent cache
+- **Simple command structure** - `installer --pkg <path> --target <target>`
+- **Deterministic behavior** - predictable, reliable operation
+
+### Deployment Options
+
+Deploy sbin-installer before using .nupkg/.pkg packages:
+
+```powershell
+# Option 1: MSI Installation (Recommended)
+Invoke-WebRequest -Uri "https://github.com/windowsadmins/sbin-installer/releases/latest/download/sbin-installer.msi" -OutFile "sbin-installer.msi"
+Start-Process msiexec -ArgumentList "/i sbin-installer.msi /quiet" -Wait
+
+# Option 2: Include in BootstrapMate manifest as first package
+{
+  "setupassistant": [
+    {
+      "name": "sbin-installer",
+      "file": "sbin-installer.msi", 
+      "type": "msi",
+      "url": "https://repo.com/packages/sbin-installer.msi",
+      "arguments": ["/quiet"]
+    }
+  ]
+}
+```
+
+### Package Configuration
+
+```json
+{
+  "setupassistant": [
+    {
+      "name": "System Tool",
+      "file": "systemtool-1.0.0.nupkg",
+      "type": "nupkg",
+      "url": "https://repo.com/packages/systemtool-1.0.0.nupkg",
+      "arguments": ["--verbose"]
+    }
+  ]
+}
+```
+
+**Target Options** (optional):
+- **Omitted** → `"/"` (system root) - Default
+- `"CurrentUserHomeDirectory"` → User's home folder  
+- `"C:\\Custom\\Path"` → Custom installation path
+
+For detailed information, see [SBIN-INSTALLER-INTEGRATION.md](SBIN-INSTALLER-INTEGRATION.md).
 
 ## Features
 
@@ -507,6 +614,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 - Original [InstallApplications](https://github.com/macadmins/installapplications) macOS project
 - [Swift port](https://github.com/rodchristiansen/installapplications) by Rod Christiansen
+- [sbin-installer](https://github.com/windowsadmins/sbin-installer) for lightweight package management
 - Windows Admin community for feedback and testing
 
 ## Support

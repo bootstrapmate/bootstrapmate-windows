@@ -7,16 +7,36 @@
       "url": "https://your-domain.com/bootstrap/packages/SampleApp.msi",
       "arguments": ["/quiet", "/norestart"],
       "type": "msi"
+    },
+    {
+      "displayname": "System Utility (sbin-installer)",
+      "name": "System Utility",
+      "file": "SystemUtility-1.0.0.nupkg",
+      "hash": "sha256",
+      "url": "https://your-domain.com/bootstrap/packages/SystemUtility-1.0.0.nupkg",
+      "arguments": ["--verbose"],
+      "type": "nupkg"
     }
   ],
   "userland": [
     {
-      "displayname": "User Application",
+      "displayname": "User Application (Chocolatey fallback)",
+      "name": "User Application",
       "file": "UserApp.nupkg",
       "hash": "sha256", 
       "url": "https://your-domain.com/bootstrap/packages/UserApp.nupkg",
       "arguments": [],
       "type": "nupkg"
+    },
+    {
+      "displayname": "Modern App (sbin-installer pkg format)",
+      "name": "Modern App",
+      "file": "ModernApp-2.0.0.pkg",
+      "hash": "sha256",
+      "url": "https://your-domain.com/bootstrap/packages/ModernApp-2.0.0.pkg",
+      "arguments": ["--verbose"],
+      "type": "pkg",
+      "target": "CurrentUserHomeDirectory"
     }
   ]
 }
