@@ -777,12 +777,17 @@ namespace BootstrapMate
                     
                 case "pkg":
                     // pkg format is native to sbin-installer
+                    Logger.WriteSubProgress("Processing .pkg with sbin-installer");
                     await RunSbinInstall(filePath, packageInfo);
                     break;
                     
                 default:
-                    Logger.Warning($"Unknown package type: {type}");
-                    Logger.WriteWarning($"Unknown package type: {type}");
+                    // Only warn for truly unknown package types, not pkg which is handled above
+                    if (type?.ToLower() != "pkg")
+                    {
+                        Logger.Warning($"Unknown package type: {type}");
+                        Logger.WriteWarning($"Unknown package type: {type}");
+                    }
                     break;
             }
         }
@@ -2058,7 +2063,7 @@ namespace BootstrapMate
             string arguments = string.Join(" ", allArgs);
             
             Logger.Debug($"Running sbin-installer: {sbinPath} {arguments}");
-            Logger.WriteSubProgress("Running sbin-installer", Path.GetFileName(packagePath));
+            Logger.WriteSubProgress("Running install for", Path.GetFileName(packagePath));
             
             var startInfo = new ProcessStartInfo
             {
