@@ -765,18 +765,18 @@ namespace BootstrapMate
                     
                 case "pkg":
                     // pkg format is native to sbin-installer
+                    if (!IsSbinInstallerAvailable())
+                    {
+                        throw new Exception("sbin-installer is required for .pkg packages but was not found. Please install sbin-installer first.");
+                    }
                     Logger.WriteSubProgress("Processing .pkg with sbin-installer");
                     await RunSbinInstall(filePath, packageInfo);
                     break;
                     
                 default:
-                    // Only warn for truly unknown package types, not pkg which is handled above
-                    if (type?.ToLower() != "pkg")
-                    {
-                        Logger.Warning($"Unknown package type: {type}");
-                        Logger.WriteWarning($"Unknown package type: {type}");
-                    }
-                    break;
+                    Logger.Warning($"Unknown package type: {type}");
+                    Logger.WriteWarning($"Unknown package type: {type}");
+                    throw new Exception($"Unsupported package type: {type}. Supported types are: msi, exe, ps1, nupkg, pkg");
             }
         }
         
@@ -1037,7 +1037,24 @@ namespace BootstrapMate
                 return primaryPath;
             }
             
-            // Try PATH resolution
+            // Secondary common installation paths
+            var alternatePaths = new[]
+            {
+                @"C:\Program Files (x86)\sbin\installer.exe",
+                @"C:\sbin\installer.exe",
+                @"C:\Tools\sbin\installer.exe"
+            };
+            
+            foreach (var path in alternatePaths)
+            {
+                if (File.Exists(path))
+                {
+                    Logger.Debug($"Found sbin-installer at alternate location: {path}");
+                    return path;
+                }
+            }
+            
+            // Try PATH resolution - but only accept paths containing "sbin" to avoid Chocolatey conflicts
             try
             {
                 var startInfo = new ProcessStartInfo
@@ -1062,10 +1079,16 @@ namespace BootstrapMate
                             var lines = output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
                             foreach (var line in lines)
                             {
-                                if (File.Exists(line) && line.Contains("sbin", StringComparison.OrdinalIgnoreCase))
+                                // Only accept paths that contain "sbin" to avoid Chocolatey conflicts
+                                if (File.Exists(line) && (line.Contains("sbin", StringComparison.OrdinalIgnoreCase) || 
+                                    line.Contains("System Binary", StringComparison.OrdinalIgnoreCase)))
                                 {
                                     Logger.Debug($"Found sbin-installer via WHERE command: {line}");
                                     return line;
+                                }
+                                else if (File.Exists(line))
+                                {
+                                    Logger.Debug($"Skipping installer.exe at {line} - not sbin-installer (likely Chocolatey conflict)");
                                 }
                             }
                         }
@@ -1077,7 +1100,8 @@ namespace BootstrapMate
                 Logger.Debug($"WHERE command failed for sbin-installer: {ex.Message}");
             }
             
-            Logger.Debug("sbin-installer not found on the system");
+            Logger.Debug("sbin-installer not found on the system. Install it from https://github.com/windowsadmins/sbin-installer");
+            Logger.Debug("Note: Always use full path 'C:\\Program Files\\sbin\\installer.exe' to avoid Chocolatey conflicts");
             return null;
         }
 
@@ -2022,8 +2046,15 @@ namespace BootstrapMate
             
             if (sbinPath == null)
             {
+                Logger.Error("sbin-installer not found. This is required for .pkg and .nupkg packages.");
+                Logger.Error("Please install sbin-installer from: https://github.com/windowsadmins/sbin-installer/releases");
+                Logger.Error("Expected location: C:\\Program Files\\sbin\\installer.exe");
+                Logger.Error("Note: If you see Chocolatey conflicts, run the FixChocoConflict.ps1 script.");
+                Logger.Error("IMPORTANT: Use full path 'C:\\Program Files\\sbin\\installer.exe' to avoid conflicts.");
                 throw new Exception("sbin-installer executable not found. Cannot proceed with package installation.");
             }
+            
+            Logger.Debug($"Using sbin-installer at: {sbinPath}");
             
             // Determine target from package info, or use default "/" (matching sbin-installer default)
             string target = "/"; // Default to system root, same as sbin-installer default
