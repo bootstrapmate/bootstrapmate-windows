@@ -2062,7 +2062,7 @@ namespace BootstrapMate
             
             string arguments = string.Join(" ", allArgs);
             
-            Logger.Debug($"Running sbin-installer: {sbinPath} {arguments}");
+            Logger.Debug($"Running {sbinPath} {arguments}");
             Logger.WriteSubProgress("Running install for", Path.GetFileName(packagePath));
             
             var startInfo = new ProcessStartInfo
