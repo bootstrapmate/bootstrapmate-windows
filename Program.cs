@@ -299,10 +299,10 @@ namespace BootstrapMate
                 Logger.Warning($"Failed to cleanup old statuses: {ex.Message}");
             }
             
-            // Clean up old cached packages (older than 7 days) on startup
+            // Clean up old cached packages (older than 2 hours) on startup
             try
             {
-                CleanupOldCache(TimeSpan.FromDays(7));
+                CleanupOldCache(TimeSpan.FromHours(2));
                 Logger.Debug("Cleaned up old cached packages");
             }
             catch (Exception ex)
@@ -506,18 +506,6 @@ namespace BootstrapMate
                 
                 // Write successful completion to registry for Intune detection
                 StatusManager.WriteSuccessfulCompletionRegistry();
-                
-                // Auto-cleanup all caches aggressively after successful completion
-                try
-                {
-                    ClearAllCachesAggressive();
-                    Logger.Info("Auto-cleanup: All caches cleared aggressively after successful completion");
-                }
-                catch (Exception cacheEx)
-                {
-                    Logger.Warning($"Auto-cleanup: Could not clear caches aggressively: {cacheEx.Message}");
-                    // Don't fail the entire process if cache cleanup fails
-                }
                 
                 // Restore system sounds before completion
                 RestoreSystemSounds();
