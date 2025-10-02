@@ -912,6 +912,17 @@ namespace BootstrapMate
             var args = GetArguments(packageInfo);
             string arguments = $"/i \"{msiPath}\" /qn /norestart {string.Join(" ", args)}";
             
+            // Detect if this is a critical sbin-installer package
+            bool isSbinInstaller = false;
+            string packageName = "";
+            if (packageInfo.TryGetProperty("name", out var nameProp))
+            {
+                packageName = nameProp.GetString() ?? "";
+                isSbinInstaller = packageName.Contains("System Binary Installer", StringComparison.OrdinalIgnoreCase) ||
+                                 packageName.Contains("sbin-installer", StringComparison.OrdinalIgnoreCase) ||
+                                 Path.GetFileName(msiPath).Contains("sbin-installer", StringComparison.OrdinalIgnoreCase);
+            }
+            
             var startInfo = new ProcessStartInfo
             {
                 FileName = "msiexec.exe",
@@ -925,16 +936,90 @@ namespace BootstrapMate
             WriteLog($"Running MSI installer: {arguments}");
             Console.WriteLine($"     [>] Running MSI installer: {arguments}");
             
-            using var process = Process.Start(startInfo);
-            if (process != null)
+            if (isSbinInstaller)
             {
-                await process.WaitForExitAsync();
-                WriteLog($"MSI installer completed with exit code: {process.ExitCode}");
-                if (process.ExitCode != 0)
+                Logger.Warning($"CRITICAL PACKAGE: {packageName} - using aggressive retry strategy");
+                WriteLog($"CRITICAL PACKAGE: {packageName} - using aggressive retry strategy");
+            }
+            
+            // CRITICAL: sbin-installer MUST succeed - everything depends on it
+            // Use ultra-aggressive retry for sbin-installer, standard retry for others
+            int maxRetries = isSbinInstaller ? 10 : 5;
+            int retryDelaySeconds = isSbinInstaller ? 15 : 10;
+            bool retryOnAnyError = isSbinInstaller; // sbin-installer retries on ANY error
+            
+            for (int attempt = 1; attempt <= maxRetries; attempt++)
+            {
+                using var process = Process.Start(startInfo);
+                if (process != null)
                 {
-                    throw new Exception($"MSI installer failed with exit code: {process.ExitCode}");
+                    await process.WaitForExitAsync();
+                    WriteLog($"MSI installer completed with exit code: {process.ExitCode}");
+                    
+                    if (process.ExitCode == 0)
+                    {
+                        // Success
+                        if (isSbinInstaller)
+                        {
+                            Logger.Info($"CRITICAL PACKAGE INSTALLED: {packageName}");
+                            WriteLog($"CRITICAL PACKAGE INSTALLED: {packageName}");
+                        }
+                        return;
+                    }
+                    else if (process.ExitCode == 1618)
+                    {
+                        // ERROR_INSTALL_ALREADY_RUNNING - another MSI is active
+                        if (attempt < maxRetries)
+                        {
+                            WriteLog($"MSI installation in progress (error 1618), retrying in {retryDelaySeconds} seconds... (attempt {attempt}/{maxRetries})");
+                            Logger.Warning($"MSI installation in progress, retrying in {retryDelaySeconds} seconds... (attempt {attempt}/{maxRetries})");
+                            await Task.Delay(retryDelaySeconds * 1000);
+                            continue; // Retry
+                        }
+                        else
+                        {
+                            string errorMsg = isSbinInstaller 
+                                ? $"CRITICAL: {packageName} failed after {maxRetries} retries (error 1618). System cannot continue without this package."
+                                : $"MSI installer failed after {maxRetries} retries: Another installation is in progress (exit code: 1618)";
+                            throw new Exception(errorMsg);
+                        }
+                    }
+                    else
+                    {
+                        // Other error codes
+                        // For sbin-installer, retry on ANY error. For others, only retry on specific codes.
+                        bool shouldRetry = retryOnAnyError || IsRetryableErrorCode(process.ExitCode);
+                        
+                        if (shouldRetry && attempt < maxRetries)
+                        {
+                            string reason = isSbinInstaller ? "CRITICAL PACKAGE - retrying on any error" : "retryable error code";
+                            WriteLog($"MSI installer failed with exit code {process.ExitCode} ({reason}), retrying in {retryDelaySeconds} seconds... (attempt {attempt}/{maxRetries})");
+                            Logger.Warning($"MSI error {process.ExitCode}, retrying in {retryDelaySeconds} seconds... (attempt {attempt}/{maxRetries})");
+                            await Task.Delay(retryDelaySeconds * 1000);
+                            continue; // Retry
+                        }
+                        else
+                        {
+                            // No more retries or non-retryable error
+                            string errorMsg = isSbinInstaller
+                                ? $"CRITICAL: {packageName} failed with exit code {process.ExitCode} after {attempt} attempts. System cannot continue without this package."
+                                : $"MSI installer failed with exit code: {process.ExitCode}";
+                            throw new Exception(errorMsg);
+                        }
+                    }
                 }
             }
+        }
+        
+        static bool IsRetryableErrorCode(int exitCode)
+        {
+            // Common retryable MSI error codes
+            // 1618: ERROR_INSTALL_ALREADY_RUNNING (handled separately above)
+            // 1603: ERROR_INSTALL_FAILURE (generic, sometimes transient)
+            // 1619: ERROR_INSTALL_PACKAGE_OPEN_FAILED (file locked)
+            // 1620: ERROR_INSTALL_PACKAGE_INVALID (corrupted, retry might help if re-downloaded)
+            // 1612: ERROR_INSTALL_SOURCE_ABSENT (network issues)
+            return exitCode == 1603 || exitCode == 1619 || exitCode == 1620 || exitCode == 1612;
         }
         
         static async Task RunExecutable(string exePath, JsonElement packageInfo)
