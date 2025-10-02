@@ -1247,21 +1247,8 @@ try {
             throw "WiX project missing - cannot build MSI packages"
         }
         
-        # Check for Chocolatey (for IntuneWinAppUtil installation)
-        if (-not (Test-Command "choco")) {
-            Write-Log "Chocolatey not found. Installing for tool management..." "INFO"
-            try {
-                Set-ExecutionPolicy Bypass -Scope Process -Force
-                [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
-                Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
-                Write-Log "Chocolatey installed successfully" "SUCCESS"
-                # Add to PATH for this session
-                $env:Path += ";$env:ALLUSERSPROFILE\chocolatey\bin"
-            } catch {
-                Write-Log "Failed to install Chocolatey: $($_.Exception.Message)" "WARN"
-                Write-Log "IntuneWinAppUtil may need manual installation" "WARN"
-            }
-        }
+        # Note: IntuneWinAppUtil is downloaded directly from Microsoft if needed
+        # See New-IntuneWinPackage function for automatic download logic
         
         Write-Log "MSI prerequisites check completed" "SUCCESS"
     }
