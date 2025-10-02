@@ -43,7 +43,8 @@
 
     <!-- Main Application Files -->
     <Component Id="BootstrapMateExecutable" Directory="INSTALLDIR" Guid="47855CCD-7EAB-464C-A795-26091DE8B83A">
-      <File Id="BootstrapMateExe" Source="$(var.BIN_DIR)\installapplications.exe" />
+      <File Id="BootstrapMateExe" Source="$(var.BIN_DIR)\installapplications.exe" KeyPath="yes" Vital="yes" />
+      <RemoveFile Id="RemoveOldExecutable" Name="installapplications.exe" On="both" />
     </Component>
 
     <!-- Runner Script -->
@@ -57,6 +58,8 @@
       <RegistryValue Root="HKLM" Key="SOFTWARE\BootstrapMate" Name="Version" Value="$(var.ProductVersion)" Type="string" />
       <RegistryValue Root="HKLM" Key="SOFTWARE\BootstrapMate" Name="InstallDate" Value="[Date]" Type="string" />
       <RegistryValue Root="HKLM" Key="SOFTWARE\BootstrapMate" Name="Architecture" Value="[ProcessorArchitecture]" Type="string" />
+      <!-- LastRunVersion for Intune detection - must match version in deploy.ps1 detection rule -->
+      <RegistryValue Root="HKLM" Key="SOFTWARE\BootstrapMate" Name="LastRunVersion" Value="$(var.ProductVersion)" Type="string" />
     </Component>
 
     <!-- Bootstrap URL registry entries - only when URL is provided -->
