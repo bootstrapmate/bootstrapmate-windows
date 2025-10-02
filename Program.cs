@@ -37,8 +37,19 @@ namespace BootstrapMate
         private static string LogDirectory = @"C:\ProgramData\ManagedBootstrap\logs";
         private static string CacheDirectory = @"C:\ProgramData\ManagedBootstrap\cache";
         
-        // Version in YYYY.MM.DD.HHMM format - dynamically generated at build time
-        private static readonly string Version = GenerateVersion();
+        // Version in YYYY.MM.DD.HHMM format - injected at build time via MSBuild
+        private static readonly string Version = GetBuildVersion();
+        
+        private static string GetBuildVersion()
+        {
+            // Get version from assembly metadata (injected by MSBuild at compile time)
+            var assembly = System.Reflection.Assembly.GetExecutingAssembly();
+            var attribute = assembly.GetCustomAttributes(typeof(System.Reflection.AssemblyMetadataAttribute), false)
+                .Cast<System.Reflection.AssemblyMetadataAttribute>()
+                .FirstOrDefault(a => a.Key == "BuildTimestamp");
+            
+            return attribute?.Value ?? "dev.build";
+        }
 
         static string GetCacheDirectory()
         {
@@ -59,12 +70,7 @@ namespace BootstrapMate
             }
         }
 
-        static string GenerateVersion()
-        {
-            // Generate version in YYYY.MM.DD.HHMM format based on current build time
-            var now = DateTime.Now;
-            return $"{now.Year:D4}.{now.Month:D2}.{now.Day:D2}.{now.Hour:D2}{now.Minute:D2}";
-        }
+
 
         /// <summary>
         /// Temporarily suppress system sounds to prevent alert sounds during silent installations
@@ -299,11 +305,11 @@ namespace BootstrapMate
                 Logger.Warning($"Failed to cleanup old statuses: {ex.Message}");
             }
             
-            // Clean up old cached packages (older than 2 hours) on startup
+            // Clean up all cached packages on startup (cache only contains failed installations for inspection)
             try
             {
-                CleanupOldCache(TimeSpan.FromHours(2));
-                Logger.Debug("Cleaned up old cached packages");
+                CleanupOldCache(TimeSpan.Zero);
+                Logger.Debug("Cleaned up cached files from previous runs (failed installations only)");
             }
             catch (Exception ex)
             {
@@ -331,14 +337,14 @@ namespace BootstrapMate
                     Console.WriteLine();
                     Console.WriteLine("Options:");
                     Console.WriteLine("  --url <url>     URL to the bootstrapmate.json manifest");
-                    Console.WriteLine("  --force         Force re-download of all packages (ignore cache)");
+                    Console.WriteLine("  --force         (Deprecated - downloads are always fresh. Cache is for inspection only)");
                     Console.WriteLine("  --verbose       Show detailed logging output");
                     Console.WriteLine("  --silent        Run completely silently (no console output)");
                     Console.WriteLine("  --help          Show this help message");
                     Console.WriteLine("  --version       Show version information");
                     Console.WriteLine("  --status        Show current installation status");
                     Console.WriteLine("  --clear-status  Clear all installation status data");
-                    Console.WriteLine("  --clear-cache   Aggressively clear all caches (BootstrapMate + Chocolatey)");
+                    Console.WriteLine("  --clear-cache   Clear all caches including failed installation files (BootstrapMate + Chocolatey)");
                     Console.WriteLine("  --reset-chocolatey  Complete Chocolatey reset (removes corrupted lib folder)");
                 }
                 return 0;
@@ -675,57 +681,76 @@ namespace BootstrapMate
         
         static async Task DownloadAndInstallPackage(string displayName, string url, string fileName, string type, JsonElement packageInfo, bool forceDownload = false)
         {
+            // Create cache download directory (keeps failed installations for inspection)
+            string cacheDir = GetCacheDirectory();
+            string localPath = Path.Combine(cacheDir, fileName);
+            
             try
             {
-                // Create cache download directory
-                string cacheDir = GetCacheDirectory();
                 
-                string localPath = Path.Combine(cacheDir, fileName);
-                
-                // Check if file exists and force download if requested
-                bool needsDownload = forceDownload || !File.Exists(localPath);
-                
-                if (needsDownload)
+                // Always download fresh files - cache is only for inspection/debugging
+                // Delete existing cached file if present to ensure fresh download
+                if (File.Exists(localPath))
                 {
-                    Logger.Debug($"Downloading {displayName} from: {url}");
-                    Logger.WriteSubProgress("Downloading from", url);
-                    
-                    using var httpClient = new HttpClient();
-                    using var response = await httpClient.GetAsync(url);
-                    if (!response.IsSuccessStatusCode)
+                    try
                     {
-                        throw new Exception($"Download failed: {response.StatusCode}");
+                        File.Delete(localPath);
+                        Logger.Debug($"Deleted old cached file: {localPath}");
                     }
-                    
-                    // Ensure the file stream is completely closed before proceeding
+                    catch (Exception ex)
                     {
-                        await using var fileStream = File.Create(localPath);
-                        await response.Content.CopyToAsync(fileStream);
-                        await fileStream.FlushAsync();
-                    } // fileStream is disposed here
-                    
-                    // Add a small delay to ensure file handle is released
-                    await Task.Delay(100);
-                    
-                    var fileInfo = new FileInfo(localPath);
-                    Logger.Debug($"Downloaded {displayName} to: {localPath} (Size: {fileInfo.Length / 1024 / 1024:F2} MB)");
-                    Logger.WriteSubProgress("Downloaded", $"{fileInfo.Length / 1024 / 1024:F1} MB");
+                        Logger.Warning($"Could not delete old cached file {localPath}: {ex.Message}");
+                    }
                 }
-                else
+                
+                Logger.Debug($"Downloading {displayName} from: {url}");
+                Logger.WriteSubProgress("Downloading from", url);
+                
+                using var httpClient = new HttpClient();
+                using var response = await httpClient.GetAsync(url);
+                if (!response.IsSuccessStatusCode)
                 {
-                    Logger.Debug($"Using cached file for {displayName}: {localPath}");
-                    Logger.WriteSubProgress("Using cached file", Path.GetFileName(localPath));
+                    throw new Exception($"Download failed: {response.StatusCode}");
                 }
+                
+                // Ensure the file stream is completely closed before proceeding
+                {
+                    await using var fileStream = File.Create(localPath);
+                    await response.Content.CopyToAsync(fileStream);
+                    await fileStream.FlushAsync();
+                } // fileStream is disposed here
+                
+                // Add a small delay to ensure file handle is released
+                await Task.Delay(100);
+                
+                var fileInfo = new FileInfo(localPath);
+                Logger.Debug($"Downloaded {displayName} to: {localPath} (Size: {fileInfo.Length / 1024 / 1024:F2} MB)");
+                Logger.WriteSubProgress("Downloaded", $"{fileInfo.Length / 1024 / 1024:F1} MB");
                 
                 // Install based on type
                 Logger.Debug($"Installing {displayName} using {type} installer...");
                 await InstallPackage(localPath, type, packageInfo);
                 
                 Logger.Debug($"Successfully installed: {displayName}");
+                
+                // Delete the cached file after successful installation
+                try
+                {
+                    if (File.Exists(localPath))
+                    {
+                        File.Delete(localPath);
+                        Logger.Debug($"Deleted cached file after successful installation: {localPath}");
+                    }
+                }
+                catch (Exception deleteEx)
+                {
+                    Logger.Warning($"Could not delete cached file after successful installation: {deleteEx.Message}");
+                }
             }
             catch (Exception ex)
             {
                 Logger.Error($"Failed to install {displayName}: {ex.Message}");
+                Logger.Warning($"Keeping cached file for inspection: {localPath}");
                 // Re-throw the exception so the caller knows the installation failed
                 throw;
             }
