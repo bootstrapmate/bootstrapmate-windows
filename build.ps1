@@ -1008,12 +1008,13 @@ Write-Host "Running BootstrapMate with configured URL..."
         if (Test-Path $msiPath) {
             Write-Log "MSI built successfully: $msiPath" "SUCCESS"
             
-            # Copy MSI to consolidated publish directory
+            # Copy MSI to consolidated publish directory with version in filename
             $publishMsiDir = "publish\msi"
             if (-not (Test-Path $publishMsiDir)) {
                 New-Item -ItemType Directory -Path $publishMsiDir -Force | Out-Null
             }
-            $finalMsiPath = Join-Path $publishMsiDir "BootstrapMate-$Arch.msi"
+            # Include version in MSI filename for better version tracking
+            $finalMsiPath = Join-Path $publishMsiDir "BootstrapMate-$Arch-$($versionInfo.FullVersion).msi"
             Copy-Item $msiPath $finalMsiPath -Force
             Write-Log "MSI copied to: $finalMsiPath" "INFO"
             
@@ -1380,6 +1381,17 @@ try {
                         $fullMsiPath = (Get-Item $msiResult.MsiPath).FullName
                         $intuneWinPath = New-IntuneWinPackage -MsiPath $fullMsiPath -OutputDirectory "publish\intunewin"
                         if ($intuneWinPath) {
+                            # Rename .intunewin file to include version for better tracking
+                            $intuneWinDir = Split-Path $intuneWinPath -Parent
+                            $versionedIntuneWinName = "BootstrapMate-$($result.Architecture)-$($versionInfo.FullVersion).intunewin"
+                            $versionedIntuneWinPath = Join-Path $intuneWinDir $versionedIntuneWinName
+                            
+                            if ($intuneWinPath -ne $versionedIntuneWinPath) {
+                                Move-Item -Path $intuneWinPath -Destination $versionedIntuneWinPath -Force
+                                Write-Log "Renamed .intunewin to include version: $versionedIntuneWinName" "INFO"
+                                $intuneWinPath = $versionedIntuneWinPath
+                            }
+                            
                             $intuneWinResults += @{
                                 Architecture = $result.Architecture
                                 Success = $true
