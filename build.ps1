@@ -714,6 +714,69 @@ function Invoke-ExecutableSigning {
     }
 }
 
+# Function to build sbin-installer for specific architecture
+function Build-SbinInstaller {
+    param(
+        [string]$Arch,
+        [System.Security.Cryptography.X509Certificates.X509Certificate2]$SigningCert = $null,
+        [string]$CertificateStore = "CurrentUser",
+        [string]$Version
+    )
+    
+    Write-Log "Building sbin-installer for $Arch architecture..." "INFO"
+    
+    # Check if installer submodule exists
+    $installerPath = Join-Path $PSScriptRoot "..\installer"
+    if (-not (Test-Path $installerPath)) {
+        Write-Log "sbin-installer submodule not found at $installerPath" "ERROR"
+        Write-Log "Run: git submodule update --init --recursive" "ERROR"
+        return $null
+    }
+    
+    # Build sbin-installer using its build script
+    Push-Location $installerPath
+    try {
+        $buildArgs = @{
+            Architecture = $Arch
+            Version = $Version
+            SkipMsi = $true  # We don't need the MSI, just the executable
+        }
+        
+        # Add certificate if available
+        if ($SigningCert) {
+            $buildArgs.CertificateThumbprint = $SigningCert.Thumbprint
+        }
+        
+        Write-Log "Running sbin-installer build: .\build.ps1 -Architecture $Arch -Version $Version -SkipMsi" "INFO"
+        & .\build.ps1 @buildArgs
+        
+        if ($LASTEXITCODE -ne 0) {
+            throw "sbin-installer build failed with exit code: $LASTEXITCODE"
+        }
+        
+        # Verify the executable was built (use current location since we're in the installer directory)
+        $installerExe = Join-Path (Get-Location) "dist\$Arch\installer.exe"
+        if (-not (Test-Path $installerExe)) {
+            throw "sbin-installer executable not found: $installerExe"
+        }
+        
+        # Convert to absolute path before returning
+        $installerExe = (Get-Item $installerExe).FullName
+        
+        $fileInfo = Get-Item $installerExe
+        $sizeMB = [math]::Round($fileInfo.Length / 1MB, 2)
+        Write-Log "sbin-installer build successful ($Arch): $($fileInfo.Name) ($sizeMB MB)" "SUCCESS"
+        
+        return $installerExe
+        
+    } catch {
+        Write-Log "Failed to build sbin-installer ($Arch): $($_.Exception.Message)" "ERROR"
+        return $null
+    } finally {
+        Pop-Location
+    }
+}
+
 # Function to build for specific architecture
 function Build-Architecture {
     param(
@@ -946,6 +1009,7 @@ function Build-MSI {
     param(
         [string]$Arch,
         [string]$Version,
+        [string]$FullVersion,  # Full YYYY.MM.DD.HHMM version for binaries
         [System.Security.Cryptography.X509Certificates.X509Certificate2]$SigningCert = $null,
         [string]$CertificateStore = "CurrentUser",
         [string]$CimianVersion = $null  # Optional CimianTools version for detection
@@ -984,13 +1048,43 @@ Write-Host "Running BootstrapMate with configured URL..."
     Set-Content -Path $customRunScriptPath -Value $customRunScriptContent -Encoding UTF8
     Write-Log "Generated custom run.ps1 script for MSI deployment" "SUCCESS"
     
+    # Stage sbin-installer for MSI packaging
+    Write-Log "Staging sbin-installer executable for MSI..." "INFO"
+    $sbinStagingDir = "installer\sbin-staging"
+    if (-not (Test-Path $sbinStagingDir)) {
+        New-Item -ItemType Directory -Path $sbinStagingDir -Force | Out-Null
+    }
+    
+    # Build sbin-installer for this architecture (use FullVersion for YYYY.MM.DD.HHMM format)
+    $sbinInstallerExe = Build-SbinInstaller -Arch $Arch -SigningCert $SigningCert -CertificateStore $CertificateStore -Version $FullVersion
+
+    if (-not $sbinInstallerExe) {
+        Write-Log "Failed to build sbin-installer for $Arch - MSI build cannot continue" "ERROR"
+        return @{ Success = $false; Architecture = $Arch }
+    }
+    
+    # Ensure we have a single string path (sbin-installer build outputs dotnet messages)
+    if ($sbinInstallerExe -is [array]) {
+        $sbinInstallerExe = $sbinInstallerExe | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Last 1
+    }
+    
+    # Copy to staging directory
+    Copy-Item $sbinInstallerExe (Join-Path $sbinStagingDir "installer.exe") -Force
+    Write-Log "Staged sbin-installer for MSI packaging" "SUCCESS"
+    
+    # Convert staging directory to absolute path for WiX
+    $sbinStagingDirAbsolute = (Resolve-Path $sbinStagingDir).Path
+    $binDirAbsolute = (Resolve-Path "publish\executables\$Arch").Path
+    
     $buildArgs = @(
         "build", $projectPath,
         "--configuration", "Release",
         "--verbosity", "normal",
         "-p:Platform=$Arch",
         "-p:ProductVersion=$($versionInfo.MsiVersion)",
-        "-p:BootstrapUrl=$bootstrapUrl"
+        "-p:BinDir=$binDirAbsolute",
+        "-p:BootstrapUrl=$bootstrapUrl",
+        "-p:SbinDir=$sbinStagingDirAbsolute"
     )
     
     # Add CimianTools version if provided
@@ -1042,11 +1136,17 @@ Write-Host "Running BootstrapMate with configured URL..."
         return @{ Success = $false; Architecture = $Arch }
     }
     
-    # Clean up the generated run script
+    # Clean up the generated run script and sbin staging directory
     $customRunScriptPath = "installer\run.ps1"
     if (Test-Path $customRunScriptPath) {
         Remove-Item $customRunScriptPath -Force
         Write-Log "Cleaned up generated run.ps1 script" "INFO"
+    }
+    
+    $sbinStagingDir = "installer\sbin-staging"
+    if (Test-Path $sbinStagingDir) {
+        Remove-Item $sbinStagingDir -Recurse -Force
+        Write-Log "Cleaned up sbin-installer staging directory" "INFO"
     }
 }
 
@@ -1360,7 +1460,7 @@ try {
                     
                     # Pass certificate store information for MSI signing
                     $certStore = if ($certificateInfo) { $certificateInfo.Store } else { "CurrentUser" }
-                    $msiResult = Build-MSI -Arch $result.Architecture -Version $versionInfo.MsiVersion -SigningCert $signingCert -CertificateStore $certStore -CimianVersion $CimianToolsVersion
+                    $msiResult = Build-MSI -Arch $result.Architecture -Version $versionInfo.MsiVersion -FullVersion $versionInfo.FullVersion -SigningCert $signingCert -CertificateStore $certStore -CimianVersion $CimianToolsVersion
                     $msiResults += $msiResult
                     
                     # Create .intunewin if MSI was successful

@@ -39,12 +39,19 @@
     <!-- Directory Structure -->
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLDIR" Name="BootstrapMate" />
+      <Directory Id="SBINDIR" Name="sbin" />
     </StandardDirectory>
 
     <!-- Main Application Files -->
     <Component Id="BootstrapMateExecutable" Directory="INSTALLDIR" Guid="47855CCD-7EAB-464C-A795-26091DE8B83A">
       <File Id="BootstrapMateExe" Source="$(var.BIN_DIR)\installapplications.exe" KeyPath="yes" Vital="yes" />
       <RemoveFile Id="RemoveOldExecutable" Name="installapplications.exe" On="both" />
+    </Component>
+
+    <!-- sbin-installer Executable -->
+    <Component Id="SbinInstallerExecutable" Directory="SBINDIR" Guid="F9E8D7C6-B5A4-3210-9876-FEDCBA098765">
+      <File Id="SbinInstallerExe" Source="$(var.SBIN_DIR)\installer.exe" KeyPath="yes" Vital="yes" />
+      <RemoveFile Id="RemoveOldSbinInstaller" Name="installer.exe" On="both" />
     </Component>
 
     <!-- Runner Script -->
@@ -74,6 +81,7 @@
     <!-- Environment Variable Component -->
     <Component Id="SetPathComponent" Guid="D4E5F6A7-B8C9-0123-DEF4-56789012345A">
       <Environment Id="UpdatePath" Name="PATH" Value="[INSTALLDIR]" Permanent="no" Part="last" Action="set" Separator=";" System="yes" />
+      <Environment Id="UpdatePathSbin" Name="PATH" Value="[SBINDIR]" Permanent="no" Part="last" Action="set" Separator=";" System="yes" />
     </Component>
     
     <!-- Custom Properties for Bootstrap URL - Set via build parameter -->
@@ -98,6 +106,7 @@
     <Feature Id="DefaultFeature" Level="1">
       <ComponentRef Id="BootstrapMateExecutable" />
       <ComponentRef Id="BootstrapMateRunnerScript" />
+      <ComponentRef Id="SbinInstallerExecutable" />
       <ComponentRef Id="RegistryEntries" />
       <ComponentRef Id="BootstrapRegistryEntries" />
       <ComponentRef Id="SetPathComponent" />

@@ -13,10 +13,11 @@
   <PropertyGroup>
     <ProductVersion Condition="'$(ProductVersion)' == ''">0.0.0</ProductVersion>
     <BinDir Condition="'$(BinDir)' == ''">$(MSBuildProjectDirectory)\..\publish\executables\$(Platform)</BinDir>
+    <SbinDir Condition="'$(SbinDir)' == ''">$(MSBuildProjectDirectory)\sbin-staging</SbinDir>
   </PropertyGroup>
 
   <PropertyGroup>
-    <DefineConstants>BIN_DIR=$(BinDir);ProductVersion=$(ProductVersion);BootstrapUrl=$(BootstrapUrl)</DefineConstants>
+    <DefineConstants>BIN_DIR=$(BinDir);SBIN_DIR=$(SbinDir);ProductVersion=$(ProductVersion);BootstrapUrl=$(BootstrapUrl)</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>
