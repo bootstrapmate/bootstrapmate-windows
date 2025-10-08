@@ -554,3 +554,4 @@ lcov.info
 *.prof
 *.trace
 IntuneWinAppUtil.exe
+installer/sbin-staging/installer.exe
