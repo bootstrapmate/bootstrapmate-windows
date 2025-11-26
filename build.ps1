@@ -1150,6 +1150,65 @@ Write-Host "Running BootstrapMate with configured URL..."
     }
 }
 
+# Function to clean up old build artifacts (keep only latest N versions per architecture)
+function Clear-OldBuildArtifacts {
+    param(
+        [int]$KeepCount = 2  # Keep the 2 most recent versions per architecture
+    )
+    
+    Write-Log "Cleaning up old build artifacts (keeping $KeepCount most recent per architecture)..." "INFO"
+    
+    $publishDir = Join-Path $PSScriptRoot "publish"
+    $totalFreed = 0
+    
+    # Clean up old .intunewin files
+    $intunewinDir = Join-Path $publishDir "intunewin"
+    if (Test-Path $intunewinDir) {
+        foreach ($arch in @("x64", "arm64")) {
+            $files = Get-ChildItem -Path $intunewinDir -Filter "BootstrapMate-$arch-*.intunewin" -ErrorAction SilentlyContinue |
+                Sort-Object LastWriteTime -Descending
+            
+            if ($files.Count -gt $KeepCount) {
+                $filesToRemove = $files | Select-Object -Skip $KeepCount
+                foreach ($file in $filesToRemove) {
+                    $sizeMB = [math]::Round($file.Length / 1MB, 2)
+                    $totalFreed += $file.Length
+                    Remove-Item $file.FullName -Force
+                    Write-Log "Removed old artifact: $($file.Name) ($sizeMB MB)" "INFO"
+                }
+            }
+        }
+    }
+    
+    # Clean up old .msi files
+    $msiDir = Join-Path $publishDir "msi"
+    if (Test-Path $msiDir) {
+        foreach ($arch in @("x64", "arm64")) {
+            $files = Get-ChildItem -Path $msiDir -Filter "BootstrapMate-$arch-*.msi" -ErrorAction SilentlyContinue |
+                Sort-Object LastWriteTime -Descending
+            
+            if ($files.Count -gt $KeepCount) {
+                $filesToRemove = $files | Select-Object -Skip $KeepCount
+                foreach ($file in $filesToRemove) {
+                    $sizeMB = [math]::Round($file.Length / 1MB, 2)
+                    $totalFreed += $file.Length
+                    Remove-Item $file.FullName -Force
+                    Write-Log "Removed old artifact: $($file.Name) ($sizeMB MB)" "INFO"
+                }
+            }
+        }
+    }
+    
+    if ($totalFreed -gt 0) {
+        $freedGB = [math]::Round($totalFreed / 1GB, 2)
+        Write-Log "Freed $freedGB GB by removing old build artifacts" "SUCCESS"
+    } else {
+        Write-Log "No old artifacts to clean up" "INFO"
+    }
+    
+    return $totalFreed
+}
+
 # Function to create .intunewin packages
 function New-IntuneWinPackage {
     param(
@@ -1305,6 +1364,9 @@ try {
     
     # Load environment variables first
     Import-EnvironmentVariables
+    
+    # Clean up old build artifacts to prevent disk space accumulation
+    Clear-OldBuildArtifacts -KeepCount 2
 
     # Enterprise Certificate Configuration - REQUIRED environment variable
     $Global:EnterpriseCertCN = $env:ENTERPRISE_CERT_CN
