@@ -318,6 +318,9 @@ namespace BootstrapMate
             
             // Parse command line arguments
             bool forceDownload = false;
+            bool noDialog = false;
+            string dialogTitle = "Setting Up Your Device";
+            string dialogMessage = "Please wait while we install required software...";
             string manifestUrl = "";
             
             if (args.Length == 0)
@@ -340,6 +343,9 @@ namespace BootstrapMate
                     Console.WriteLine("  --force         (Deprecated - downloads are always fresh. Cache is for inspection only)");
                     Console.WriteLine("  --verbose       Show detailed logging output");
                     Console.WriteLine("  --silent        Run completely silently (no console output)");
+                    Console.WriteLine("  --no-dialog     Disable progress dialog (csharpdialog)");
+                    Console.WriteLine("  --dialog-title  Custom title for progress dialog");
+                    Console.WriteLine("  --dialog-message  Custom message for progress dialog");
                     Console.WriteLine("  --help          Show this help message");
                     Console.WriteLine("  --version       Show version information");
                     Console.WriteLine("  --status        Show current installation status");
@@ -410,20 +416,40 @@ namespace BootstrapMate
                             return 1;
                         }
                         break;
+                        
+                    case "--no-dialog":
+                        noDialog = true;
+                        break;
+                        
+                    case "--dialog-title":
+                        if (i + 1 < args.Length)
+                        {
+                            dialogTitle = args[i + 1];
+                            i++;
+                        }
+                        break;
+                        
+                    case "--dialog-message":
+                        if (i + 1 < args.Length)
+                        {
+                            dialogMessage = args[i + 1];
+                            i++;
+                        }
+                        break;
                 }
             }
 
             // Process manifest if URL was provided
             if (!string.IsNullOrEmpty(manifestUrl))
             {
-                return await ProcessManifest(manifestUrl, forceDownload);
+                return await ProcessManifest(manifestUrl, forceDownload, noDialog, dialogTitle, dialogMessage);
             }
             
             Console.WriteLine("ERROR: Invalid arguments. Use --help for usage information.");
             return 1;
         }
         
-        static async Task<int> ProcessManifest(string manifestUrl, bool forceDownload = false)
+        static async Task<int> ProcessManifest(string manifestUrl, bool forceDownload = false, bool noDialog = false, string dialogTitle = "Setting Up Your Device", string dialogMessage = "Please wait while we install required software...")
         {
             try
             {
@@ -454,11 +480,54 @@ namespace BootstrapMate
                 using var doc = JsonDocument.Parse(jsonContent);
                 var root = doc.RootElement;
                 
+                // Count total packages for dialog progress
+                int totalPackages = 0;
+                if (root.TryGetProperty("setupassistant", out var setupCount))
+                {
+                    totalPackages += setupCount.GetArrayLength();
+                }
+                if (root.TryGetProperty("userland", out var userlandCount))
+                {
+                    totalPackages += userlandCount.GetArrayLength();
+                }
+                
+                // Initialize dialog (gracefully degrades if not available)
+                if (!noDialog)
+                {
+                    DialogManager.Instance.Initialize(
+                        dialogTitle,
+                        dialogMessage,
+                        totalPackages,
+                        icon: null,
+                        fullScreen: false,
+                        kioskMode: false
+                    );
+                    
+                    // Add list items for all packages
+                    if (root.TryGetProperty("setupassistant", out var setupPkgs))
+                    {
+                        foreach (var pkg in setupPkgs.EnumerateArray())
+                        {
+                            var name = pkg.GetProperty("name").GetString() ?? "Unknown";
+                            DialogManager.Instance.AddListItem(name, DialogStatus.Pending);
+                        }
+                    }
+                    if (root.TryGetProperty("userland", out var userlandPkgs))
+                    {
+                        foreach (var pkg in userlandPkgs.EnumerateArray())
+                        {
+                            var name = pkg.GetProperty("name").GetString() ?? "Unknown";
+                            DialogManager.Instance.AddListItem(name, DialogStatus.Pending);
+                        }
+                    }
+                }
+                
                 // Process setupassistant packages first
                 if (root.TryGetProperty("setupassistant", out var setupAssistant))
                 {
                     StatusManager.SetPhaseStatus(InstallationPhase.SetupAssistant, InstallationStage.Starting);
                     Logger.WriteSection("Processing Setup Assistant packages");
+                    DialogManager.Instance.NotifyPhaseStarted("Setup Assistant");
                     StatusManager.SetPhaseStatus(InstallationPhase.SetupAssistant, InstallationStage.Running);
                     
                     try
@@ -486,6 +555,7 @@ namespace BootstrapMate
                     StatusManager.SetPhaseStatus(InstallationPhase.Userland, InstallationStage.Starting);
                     Logger.Debug("Processing Userland packages...");
                     Logger.WriteSection("Processing Userland packages");
+                    DialogManager.Instance.NotifyPhaseStarted("Userland");
                     StatusManager.SetPhaseStatus(InstallationPhase.Userland, InstallationStage.Running);
                     
                     try
@@ -510,6 +580,11 @@ namespace BootstrapMate
                 Logger.Debug("BootstrapMate completed successfully!");
                 Logger.WriteCompletion("BootstrapMate completed successfully!");
                 
+                // Mark dialog as complete and close it
+                DialogManager.Instance.Complete("Setup Complete!");
+                await Task.Delay(2000); // Give user time to see completion message
+                DialogManager.Instance.Close();
+                
                 // Write successful completion to registry for Intune detection
                 StatusManager.WriteSuccessfulCompletionRegistry();
                 
@@ -522,6 +597,15 @@ namespace BootstrapMate
             {
                 // Ensure sounds are restored even on error
                 RestoreSystemSounds();
+                
+                // Close dialog on error
+                try
+                {
+                    DialogManager.Instance.UpdateProgressText("Setup failed - please contact IT support");
+                    DialogManager.Instance.TerminateDialog();
+                }
+                catch { }
+                
                 Logger.Error($"Error processing manifest: {ex.Message}");
                 Logger.Debug($"Stack trace: {ex.StackTrace}");
                 Logger.WriteError($"Error processing manifest: {ex.Message}");
@@ -653,6 +737,7 @@ namespace BootstrapMate
                         {
                             Logger.Debug($"Skipping {displayName} - x64 condition not met on {actualArchitecture} architecture");
                             Logger.WriteSkipped($"Skipping - x64 condition not met on {actualArchitecture}");
+                            DialogManager.Instance.NotifyPackageSkipped(displayName, "Architecture mismatch");
                             continue;
                         }
                         
@@ -661,6 +746,7 @@ namespace BootstrapMate
                         {
                             Logger.Debug($"Skipping {displayName} - ARM64 condition not met on {actualArchitecture} architecture");
                             Logger.WriteSkipped($"Skipping - ARM64 condition not met on {actualArchitecture}");
+                            DialogManager.Instance.NotifyPackageSkipped(displayName, "Architecture mismatch");
                             continue;
                         }
                     }
@@ -668,11 +754,13 @@ namespace BootstrapMate
                     await DownloadAndInstallPackage(displayName, url, fileName, type, package, forceDownload);
                     Logger.Debug($"Successfully completed package: {displayName}");
                     Logger.WriteSuccess($"{displayName} installed successfully");
+                    DialogManager.Instance.NotifyPackageSuccess(displayName);
                 }
                 catch (Exception ex)
                 {
                     Logger.Error($"Failed to install package {displayName}: {ex.Message}");
                     Logger.WriteError($"Failed to install package {displayName}: {ex.Message}");
+                    DialogManager.Instance.NotifyPackageFailure(displayName, "Failed");
                     // Continue with next package instead of stopping entire process
                     // Note: We don't re-throw because we want to continue with other packages
                 }
@@ -705,6 +793,7 @@ namespace BootstrapMate
                 
                 Logger.Debug($"Downloading {displayName} from: {url}");
                 Logger.WriteSubProgress("Downloading from", url);
+                DialogManager.Instance.NotifyDownloadStarted(displayName);
                 
                 using var httpClient = new HttpClient();
                 using var response = await httpClient.GetAsync(url);
@@ -729,6 +818,7 @@ namespace BootstrapMate
                 
                 // Install based on type
                 Logger.Debug($"Installing {displayName} using {type} installer...");
+                DialogManager.Instance.NotifyInstallStarted(displayName);
                 await InstallPackage(localPath, type, packageInfo);
                 
                 Logger.Debug($"Successfully installed: {displayName}");
