@@ -1153,7 +1153,7 @@ Write-Host "Running BootstrapMate with configured URL..."
 # Function to clean up old build artifacts (keep only latest N versions per architecture)
 function Clear-OldBuildArtifacts {
     param(
-        [int]$KeepCount = 2  # Keep the 2 most recent versions per architecture
+        [int]$KeepCount = 1  # Keep only the most recent version per architecture
     )
     
     Write-Log "Cleaning up old build artifacts (keeping $KeepCount most recent per architecture)..." "INFO"
@@ -1194,6 +1194,28 @@ function Clear-OldBuildArtifacts {
                     $totalFreed += $file.Length
                     Remove-Item $file.FullName -Force
                     Write-Log "Removed old artifact: $($file.Name) ($sizeMB MB)" "INFO"
+                }
+            }
+        }
+    }
+    
+    # Clean up old executables (each arch has its own subdirectory)
+    $exeDir = Join-Path $publishDir "executables"
+    if (Test-Path $exeDir) {
+        foreach ($arch in @("x64", "arm64")) {
+            $archExeDir = Join-Path $exeDir $arch
+            if (Test-Path $archExeDir) {
+                $files = Get-ChildItem -Path $archExeDir -Filter "*.exe" -ErrorAction SilentlyContinue |
+                    Sort-Object LastWriteTime -Descending
+                
+                if ($files.Count -gt $KeepCount) {
+                    $filesToRemove = $files | Select-Object -Skip $KeepCount
+                    foreach ($file in $filesToRemove) {
+                        $sizeMB = [math]::Round($file.Length / 1MB, 2)
+                        $totalFreed += $file.Length
+                        Remove-Item $file.FullName -Force
+                        Write-Log "Removed old executable: $($file.Name) ($sizeMB MB)" "INFO"
+                    }
                 }
             }
         }
@@ -1366,7 +1388,7 @@ try {
     Import-EnvironmentVariables
     
     # Clean up old build artifacts to prevent disk space accumulation
-    Clear-OldBuildArtifacts -KeepCount 2
+    Clear-OldBuildArtifacts -KeepCount 1
 
     # Enterprise Certificate Configuration - REQUIRED environment variable
     $Global:EnterpriseCertCN = $env:ENTERPRISE_CERT_CN
