@@ -1043,7 +1043,7 @@ function Build-MSI {
 # Generated during build with URL: $bootstrapUrl
 
 Write-Host "Running BootstrapMate with configured URL..."
-& 'C:\Program Files\BootstrapMate\installapplications.exe' --url $bootstrapUrl
+& 'C:\Program Files\BootstrapMate\installapplications.exe' --url $bootstrapUrl --no-dialog
 "@
     Set-Content -Path $customRunScriptPath -Value $customRunScriptContent -Encoding UTF8
     Write-Log "Generated custom run.ps1 script for MSI deployment" "SUCCESS"
