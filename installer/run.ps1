@@ -4,4 +4,4 @@
 # Generated during build with URL: https://cimian.example.com/bootstrap/management.json
 
 Write-Host "Running BootstrapMate with configured URL..."
-& 'C:\Program Files\BootstrapMate\installapplications.exe' --url https://cimian.example.com/bootstrap/management.json
+& 'C:\Program Files\BootstrapMate\installapplications.exe' --url https://cimian.example.com/bootstrap/management.json --no-dialog
