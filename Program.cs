@@ -727,9 +727,10 @@ namespace BootstrapMate
                         var conditionStr = condition.GetString() ?? "";
                         Logger.Debug($"Checking condition: {conditionStr}");
                         
-                        // Get actual processor architecture - use RuntimeInformation for accurate detection
-                        string actualArchitecture = System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture.ToString().ToUpperInvariant();
-                        Logger.Debug($"Detected runtime architecture: {actualArchitecture}");
+                        // Get actual OS architecture - use OSArchitecture (not ProcessArchitecture) so that
+                        // the x64 binary running under ARM64 emulation still correctly detects ARM64.
+                        string actualArchitecture = System.Runtime.InteropServices.RuntimeInformation.OSArchitecture.ToString().ToUpperInvariant();
+                        Logger.Debug($"Detected OS architecture: {actualArchitecture}");
                         
                         // Skip x64 packages on non-x64 systems 
                         // Note: RuntimeInformation reports "X64" for AMD64/Intel 64-bit, "ARM64" for ARM64

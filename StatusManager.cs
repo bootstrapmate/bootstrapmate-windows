@@ -248,7 +248,8 @@ namespace BootstrapMate
 
         private static string GetArchitecture()
         {
-            return RuntimeInformation.ProcessArchitecture.ToString().ToUpperInvariant();
+            // Use OSArchitecture so the x64 binary running under ARM64 emulation reports ARM64
+            return RuntimeInformation.OSArchitecture.ToString().ToUpperInvariant();
         }
 
         public static InstallationStatus GetPhaseStatus(InstallationPhase phase)
