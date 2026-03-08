@@ -1474,9 +1474,13 @@ function Clear-OldBuildArtifacts {
                 $filesToRemove = $files | Select-Object -Skip $KeepCount
                 foreach ($file in $filesToRemove) {
                     $sizeMB = [math]::Round($file.Length / 1MB, 2)
-                    $totalFreed += $file.Length
-                    Remove-Item $file.FullName -Force
-                    Write-Log "Removed old artifact: $($file.Name) ($sizeMB MB)" "INFO"
+                    try {
+                        Remove-Item $file.FullName -Force -ErrorAction Stop
+                        $totalFreed += $file.Length
+                        Write-Log "Removed old artifact: $($file.Name) ($sizeMB MB)" "INFO"
+                    } catch {
+                        Write-Log "Skipping locked artifact: $($file.Name) — $($_.Exception.Message)" "WARN"
+                    }
                 }
             }
         }
@@ -1493,9 +1497,13 @@ function Clear-OldBuildArtifacts {
                 $filesToRemove = $files | Select-Object -Skip $KeepCount
                 foreach ($file in $filesToRemove) {
                     $sizeMB = [math]::Round($file.Length / 1MB, 2)
-                    $totalFreed += $file.Length
-                    Remove-Item $file.FullName -Force
-                    Write-Log "Removed old artifact: $($file.Name) ($sizeMB MB)" "INFO"
+                    try {
+                        Remove-Item $file.FullName -Force -ErrorAction Stop
+                        $totalFreed += $file.Length
+                        Write-Log "Removed old artifact: $($file.Name) ($sizeMB MB)" "INFO"
+                    } catch {
+                        Write-Log "Skipping locked artifact: $($file.Name) — $($_.Exception.Message)" "WARN"
+                    }
                 }
             }
         }
@@ -1514,9 +1522,13 @@ function Clear-OldBuildArtifacts {
                     $filesToRemove = $files | Select-Object -Skip $KeepCount
                     foreach ($file in $filesToRemove) {
                         $sizeMB = [math]::Round($file.Length / 1MB, 2)
-                        $totalFreed += $file.Length
-                        Remove-Item $file.FullName -Force
-                        Write-Log "Removed old executable: $($file.Name) ($sizeMB MB)" "INFO"
+                        try {
+                            Remove-Item $file.FullName -Force -ErrorAction Stop
+                            $totalFreed += $file.Length
+                            Write-Log "Removed old executable: $($file.Name) ($sizeMB MB)" "INFO"
+                        } catch {
+                            Write-Log "Skipping locked executable: $($file.Name) — $($_.Exception.Message)" "WARN"
+                        }
                     }
                 }
             }
