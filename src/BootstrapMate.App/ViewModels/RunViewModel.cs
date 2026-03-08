@@ -268,7 +268,8 @@ public partial class RunViewModel : ObservableObject
 
     private static string? FindCliExecutable()
     {
-        var arch = System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture switch
+        // Use OSArchitecture so an x64 binary running under ARM64 emulation reports ARM64
+        var arch = System.Runtime.InteropServices.RuntimeInformation.OSArchitecture switch
         {
             System.Runtime.InteropServices.Architecture.Arm64 => "arm64",
             System.Runtime.InteropServices.Architecture.X64 => "x64",

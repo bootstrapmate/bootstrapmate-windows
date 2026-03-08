@@ -35,7 +35,7 @@ public partial class LogsViewModel : ObservableObject
     public record LogFile(string Name, string Path, DateTime? Date, long SizeBytes)
     {
         public string DisplayDate => Date is { } d
-            ? $"{d:MMMM} {OrdinalDay(d.Day)} {d:yyyy}"
+            ? $"{d:MMMM} {OrdinalDay(d.Day)} {d:yyyy} at {d:HH:mm}"
             : Name;
 
         public string DisplayTime => Date?.ToString("yyyy-MM-dd HH:mm:ss") ?? "";

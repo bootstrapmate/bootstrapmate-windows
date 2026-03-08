@@ -182,6 +182,6 @@ public sealed partial class RunPage : Page
         RunViewModel.LogLevel.Warning => new SolidColorBrush(Microsoft.UI.Colors.Goldenrod),
         RunViewModel.LogLevel.Success => new SolidColorBrush(Microsoft.UI.Colors.MediumSeaGreen),
         RunViewModel.LogLevel.Debug   => new SolidColorBrush(Windows.UI.Color.FromArgb(204, 128, 128, 128)),
-        _                             => new SolidColorBrush(Microsoft.UI.Colors.White),
+        _ => (SolidColorBrush)Microsoft.UI.Xaml.Application.Current.Resources["TextFillColorPrimaryBrush"],
     };
 }
