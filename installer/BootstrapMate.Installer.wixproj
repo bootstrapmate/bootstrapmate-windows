@@ -18,7 +18,10 @@
   </PropertyGroup>
 
   <PropertyGroup>
-    <DefineConstants>BIN_DIR=$(BinDir);APP_DIR=$(AppDir);SBIN_DIR=$(SbinDir);ProductVersion=$(ProductVersion);BootstrapUrl=$(BootstrapUrl)</DefineConstants>
+    <DefineConstants>BIN_DIR=$(BinDir);APP_DIR=$(AppDir);SBIN_DIR=$(SbinDir);ProductVersion=$(ProductVersion)</DefineConstants>
+    <!-- Only define BootstrapUrl preprocessor variable when a non-empty URL is provided.
+         WiX v6 (WIX0006) rejects Property/@Value="" so we must not pass an empty var. -->
+    <DefineConstants Condition="'$(BootstrapUrl)' != ''">$(DefineConstants);BootstrapUrl=$(BootstrapUrl)</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>
