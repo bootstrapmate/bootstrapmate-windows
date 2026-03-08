@@ -43,6 +43,12 @@
       <RemoveFile Id="RemoveOldExecutable" Name="installapplications.exe" On="both" />
     </Component>
 
+    <!-- GUI Application -->
+    <Component Id="BootstrapMateGuiApp" Directory="INSTALLDIR" Guid="F1A2B3C4-D5E6-7890-ABCD-EF1234567890"
+               Condition="APP_DIR &lt;&gt; &quot;&quot;">
+      <File Id="BootstrapMateGuiExe" Source="$(var.APP_DIR)\BootstrapMate.exe" Vital="yes" />
+    </Component>
+
     <!-- Runner Script -->
     <Component Id="BootstrapMateRunnerScript" Directory="INSTALLDIR" Guid="B8F7E6D5-C4A3-9012-B456-789012345CDE">
       <File Id="RunnerScript" Source="run.ps1" />
@@ -93,6 +99,7 @@
     <!-- Feature Definition -->
     <Feature Id="DefaultFeature" Level="1">
       <ComponentRef Id="BootstrapMateExecutable" />
+      <ComponentRef Id="BootstrapMateGuiApp" />
       <ComponentRef Id="BootstrapMateRunnerScript" />
       <ComponentRef Id="RegistryEntries" />
       <ComponentRef Id="BootstrapRegistryEntries" />

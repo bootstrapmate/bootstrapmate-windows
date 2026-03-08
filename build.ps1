@@ -1372,6 +1372,7 @@ Write-Host "Running BootstrapMate with configured URL..."
     Write-Log "Generated custom run.ps1 script for MSI deployment" "SUCCESS"
     
     $binDirAbsolute = (Resolve-Path "publish\executables\$Arch").Path
+    $appDirAbsolute = if (Test-Path "publish\app\$Arch") { (Resolve-Path "publish\app\$Arch").Path } else { "" }
     
     $buildArgs = @(
         "build", $projectPath,
@@ -1382,6 +1383,9 @@ Write-Host "Running BootstrapMate with configured URL..."
         "-p:BinDir=$binDirAbsolute",
         "-p:BootstrapUrl=$bootstrapUrl"
     )
+    if ($appDirAbsolute) {
+        $buildArgs += "-p:AppDir=$appDirAbsolute"
+    }
     
     Write-Log "Building MSI: dotnet $($buildArgs -join ' ')" "INFO"
     
