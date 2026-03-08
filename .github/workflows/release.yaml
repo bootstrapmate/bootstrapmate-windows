@@ -1,0 +1,313 @@
+# BootstrapMate Windows — Build, Package & Release
+#
+# Triggers:
+#   - Push to main       → CI build (no release)
+#   - Pull request       → CI build (no release)
+#   - Tag v*             → Full release with MSI + .intunewin
+#
+# Code signing is not enabled for this public project (unsigned binaries).
+# The signing steps below are commented out for reference in case it is
+# needed in the future. To enable, uncomment the three signing steps and
+# add these repository secrets:
+#   SIGNING_CERTIFICATE_BASE64  — PFX certificate exported as base64
+#   SIGNING_CERTIFICATE_PASSWORD — PFX password
+#
+# The workflow uses WiX v6 SDK (WixToolset.Sdk/6.0.2)
+
+name: Release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  build:
+    name: Build (${{ matrix.arch }})
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      # ── Version ─────────────────────────────────────────────
+      - name: Generate version
+        id: version
+        shell: pwsh
+        run: |
+          $now  = Get-Date
+          $full = $now.ToString("yyyy.MM.dd.HHmm")
+          $msi  = "$($now.Year - 2000).$($now.Month).$($now.Day).$($now.ToString('HHmm'))"
+          "full=$full"  | Out-File -Append $env:GITHUB_OUTPUT
+          "msi=$msi"    | Out-File -Append $env:GITHUB_OUTPUT
+
+      # ── CLI Build ───────────────────────────────────────────
+      - name: Build CLI (installapplications.exe)
+        run: >
+          dotnet publish BootstrapMate.csproj
+          --configuration Release
+          --runtime win-${{ matrix.arch }}
+          --output publish/executables/${{ matrix.arch }}
+          --self-contained true
+          --verbosity minimal
+
+      # ── GUI App Build ───────────────────────────────────────
+      - name: Build GUI App (BootstrapMate.exe)
+        run: >
+          dotnet publish src/BootstrapMate.App/BootstrapMate.App.csproj
+          --configuration Release
+          --runtime win-${{ matrix.arch }}
+          --output publish/app/${{ matrix.arch }}
+          --self-contained true
+          --verbosity minimal
+
+      # ── XAML Resources (XBF + resources.pri) ────────────────
+      - name: Generate resources.pri
+        shell: pwsh
+        run: |
+          $arch = "${{ matrix.arch }}"
+          $outputDir = (Resolve-Path "publish/app/$arch").Path
+          $appProjectDir = Join-Path $PWD "src/BootstrapMate.App"
+
+          # Find makepri.exe from Windows SDK
+          $sdkBin = "${env:ProgramFiles(x86)}\Windows Kits\10\bin"
+          $makepri = Get-ChildItem -Path $sdkBin -Filter "makepri.exe" -Recurse -ErrorAction SilentlyContinue |
+            Where-Object { $_.DirectoryName -match "x64" } |
+            Sort-Object { [version]($_.DirectoryName -replace '.*\\(\d+\.\d+\.\d+\.\d+)\\.*','$1') } -Descending |
+            Select-Object -First 1
+
+          if (-not $makepri) {
+            Write-Host "::warning::makepri.exe not found — resources.pri will not be generated"
+            exit 0
+          }
+
+          Write-Host "Using makepri: $($makepri.FullName)"
+
+          # Locate XBF files from the intermediate output
+          $rid = "win-$arch"
+          $objDir = Join-Path $appProjectDir "obj/Release/net10.0-windows10.0.19041.0/$rid"
+          $xbfs = Get-ChildItem -Path $objDir -Filter "*.xbf" -Recurse -ErrorAction SilentlyContinue
+
+          if (-not $xbfs -or $xbfs.Count -eq 0) {
+            Write-Host "::warning::No XBF files found in $objDir"
+            exit 0
+          }
+
+          Write-Host "Found $($xbfs.Count) XBF file(s)"
+
+          # Create staging directory
+          $stagingDir = Join-Path $env:RUNNER_TEMP "pri-staging"
+          New-Item -ItemType Directory -Path $stagingDir -Force | Out-Null
+
+          foreach ($xbf in $xbfs) {
+            $relative = $xbf.FullName.Substring($objDir.Length + 1)
+            $dest = Join-Path $stagingDir $relative
+            $destDir = Split-Path $dest -Parent
+            if (-not (Test-Path $destDir)) { New-Item -ItemType Directory -Path $destDir -Force | Out-Null }
+            Copy-Item $xbf.FullName $dest -Force
+            Copy-Item $xbf.FullName (Join-Path $outputDir $relative) -Force
+            Write-Host "  XBF: $relative"
+          }
+
+          # Copy framework PRI files from WinAppSDK NuGet package
+          $nugetCache = Join-Path $env:USERPROFILE ".nuget/packages"
+          $winAppSdkPris = Get-ChildItem -Path $nugetCache -Filter "*.pri" -Recurse -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -like "*microsoft.windowsappsdk*" -and $_.FullName -like "*Microsoft.UI*" } |
+            Sort-Object Length -Descending | Select-Object -First 2
+
+          foreach ($pri in $winAppSdkPris) {
+            Copy-Item $pri.FullName (Join-Path $stagingDir $pri.Name) -Force
+            $sizeKB = [math]::Round($pri.Length / 1KB)
+            Write-Host "  Framework PRI: $($pri.Name) ($sizeKB KB)"
+          }
+
+          # Create priconfig.xml
+          $priconfigPath = Join-Path $stagingDir "priconfig.xml"
+          @"
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources targetOsVersion="10.0.0" majorVersion="1">
+            <index root="$stagingDir" startIndexAt="$stagingDir">
+              <default>
+                <qualifier name="Language" value="en-US" />
+                <qualifier name="Contrast" value="standard" />
+                <qualifier name="Scale" value="200" />
+                <qualifier name="HomeRegion" value="001" />
+                <qualifier name="TargetSize" value="256" />
+                <qualifier name="LayoutDirection" value="LTR" />
+                <qualifier name="DXFeatureLevel" value="DX9" />
+                <qualifier name="Configuration" value="" />
+                <qualifier name="AlternateForm" value="" />
+                <qualifier name="Platform" value="UAP" />
+              </default>
+              <indexer-config type="folder" foldernameAsQualifier="true" filenameAsQualifier="true" />
+              <indexer-config type="PRI" />
+            </index>
+          </resources>
+          "@ | Set-Content $priconfigPath -Encoding UTF8
+
+          # Run makepri
+          $priOutput = Join-Path $outputDir "resources.pri"
+          & $makepri.FullName new /pr $stagingDir /cf $priconfigPath /of $priOutput /o 2>&1
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "::error::makepri.exe failed with exit code $LASTEXITCODE"
+            exit 1
+          }
+
+          $sizeKB = [math]::Round((Get-Item $priOutput).Length / 1KB)
+          Write-Host "Generated resources.pri ($sizeKB KB)"
+
+      # ── Code Signing ──────────────────────────────────────────
+      # Signing CI sampletes are included but commented out since org doesn't currently have a code signing certificate. 
+      # This allows the workflow to run without errors while still providing a reference for how to implement code signing 
+      # in the future if needed. The binaries will be unsigned in the meantime
+      # If you forked the repository and code signing is desired,
+      # uncomment the steps below and add the required secrets to enable.
+      #
+      # - name: Import signing certificate
+      #   if: startsWith(github.ref, 'refs/tags/v')
+      #   shell: pwsh
+      #   env:
+      #     SIGNING_CERTIFICATE_BASE64: ${{ secrets.SIGNING_CERTIFICATE_BASE64 }}
+      #     SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.SIGNING_CERTIFICATE_PASSWORD }}
+      #   run: |
+      #     if (-not $env:SIGNING_CERTIFICATE_BASE64) {
+      #       Write-Host "::warning::No signing certificate configured — skipping code signing"
+      #       exit 0
+      #     }
+      #     $pfxPath = Join-Path $env:RUNNER_TEMP "cert.pfx"
+      #     [System.IO.File]::WriteAllBytes($pfxPath, [System.Convert]::FromBase64String($env:SIGNING_CERTIFICATE_BASE64))
+      #     $securePassword = ConvertTo-SecureString $env:SIGNING_CERTIFICATE_PASSWORD -AsPlainText -Force
+      #     $cert = Import-PfxCertificate -FilePath $pfxPath -CertStoreLocation Cert:\CurrentUser\My -Password $securePassword
+      #     "CERT_THUMBPRINT=$($cert.Thumbprint)" | Out-File -Append $env:GITHUB_ENV
+      #     Remove-Item $pfxPath -Force
+      #
+      # - name: Sign executables
+      #   if: startsWith(github.ref, 'refs/tags/v') && env.CERT_THUMBPRINT != ''
+      #   shell: pwsh
+      #   run: |
+      #     $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Filter signtool.exe -Recurse |
+      #       Where-Object { $_.DirectoryName -match "x64" } |
+      #       Sort-Object { [version]($_.DirectoryName -replace '.*\\(\d+\.\d+\.\d+\.\d+)\\.*','$1') } -Descending |
+      #       Select-Object -First 1
+      #     $files = @(
+      #       "publish/executables/${{ matrix.arch }}/installapplications.exe",
+      #       "publish/app/${{ matrix.arch }}/BootstrapMate.exe"
+      #     )
+      #     foreach ($file in $files) {
+      #       if (Test-Path $file) {
+      #         Write-Host "Signing $file ..."
+      #         & $signtool.FullName sign /s My /sha1 $env:CERT_THUMBPRINT /fd SHA256 /td SHA256 /tr http://timestamp.digicert.com /v $file
+      #         if ($LASTEXITCODE -ne 0) { Write-Host "::warning::Failed to sign $file" }
+      #       }
+      #     }
+
+      # ── WiX v6 MSI ─────────────────────────────────────────
+      - name: Build MSI
+        shell: pwsh
+        run: |
+          $binDir = (Resolve-Path "publish/executables/${{ matrix.arch }}").Path
+          $appDir = (Resolve-Path "publish/app/${{ matrix.arch }}").Path
+
+          # Generate run.ps1 for MSI
+          $runPs1 = @"
+          Write-Host "Running BootstrapMate..."
+          & 'C:\Program Files\BootstrapMate\installapplications.exe' --url `$args[0] --no-dialog
+          "@
+          Set-Content -Path "installer/run.ps1" -Value $runPs1 -Encoding UTF8
+
+          dotnet build installer/BootstrapMate.Installer.wixproj `
+            --configuration Release `
+            --verbosity normal `
+            "-p:Platform=${{ matrix.arch }}" `
+            "-p:ProductVersion=${{ steps.version.outputs.msi }}" `
+            "-p:BinDir=$binDir" `
+            "-p:AppDir=$appDir" `
+            "-p:BootstrapUrl="
+
+      # - name: Sign MSI
+      #   if: startsWith(github.ref, 'refs/tags/v') && env.CERT_THUMBPRINT != ''
+      #   shell: pwsh
+      #   run: |
+      #     $msi = Get-ChildItem "installer/bin" -Filter "*.msi" -Recurse | Select-Object -First 1
+      #     if ($msi) {
+      #       $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Filter signtool.exe -Recurse |
+      #         Where-Object { $_.DirectoryName -match "x64" } |
+      #         Sort-Object { [version]($_.DirectoryName -replace '.*\\(\d+\.\d+\.\d+\.\d+)\\.*','$1') } -Descending |
+      #         Select-Object -First 1
+      #       & $signtool.FullName sign /s My /sha1 $env:CERT_THUMBPRINT /fd SHA256 /td SHA256 /tr http://timestamp.digicert.com /v $msi.FullName
+      #     }
+
+      # ── Stage artifacts ─────────────────────────────────────
+      - name: Stage release artifacts
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.full }}"
+          $arch    = "${{ matrix.arch }}"
+          $staging = "staging"
+          New-Item -ItemType Directory -Path $staging -Force | Out-Null
+
+          # MSI
+          $msi = Get-ChildItem "installer/bin" -Filter "*.msi" -Recurse | Select-Object -First 1
+          if ($msi) {
+            Copy-Item $msi.FullName "$staging/BootstrapMate-$arch-$version.msi"
+          }
+
+          # Standalone executables (zip)
+          $zipDir = Join-Path $env:RUNNER_TEMP "zip-$arch"
+          New-Item -ItemType Directory -Path $zipDir -Force | Out-Null
+          Copy-Item "publish/executables/$arch/installapplications.exe" $zipDir/
+          if (Test-Path "publish/app/$arch/BootstrapMate.exe") {
+            Copy-Item "publish/app/$arch/*" $zipDir/ -Recurse
+          }
+          Compress-Archive -Path "$zipDir/*" -DestinationPath "$staging/BootstrapMate-$arch-$version.zip" -Force
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: bootstrapmate-${{ matrix.arch }}
+          path: staging/*
+          retention-days: 14
+
+  # ── Release Job (tag pushes only) ─────────────────────────
+  release:
+    name: Create Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List artifacts
+        run: find artifacts -type f | sort
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: artifacts/*
+          fail_on_unmatched_files: false
