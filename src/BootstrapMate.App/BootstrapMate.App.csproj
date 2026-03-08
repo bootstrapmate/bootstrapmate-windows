@@ -45,4 +45,9 @@
     <ProjectReference Include="..\BootstrapMate.Core\BootstrapMate.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Content Include="Assets\BootstrapMate.png" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Assets\BootstrapMate.ico" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

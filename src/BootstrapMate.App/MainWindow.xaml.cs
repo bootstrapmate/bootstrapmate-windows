@@ -24,6 +24,10 @@ public sealed partial class MainWindow : Window
         var scale = dpi / 96.0;
         AppWindow.Resize(new Windows.Graphics.SizeInt32((int)(1100 * scale), (int)(750 * scale)));
 
+        // Set the window icon from embedded asset
+        AppWindow.SetIcon(System.IO.Path.Combine(
+            AppContext.BaseDirectory, "Assets", "BootstrapMate.ico"));
+
         // Extend content into title bar for seamless theme-matching appearance
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
