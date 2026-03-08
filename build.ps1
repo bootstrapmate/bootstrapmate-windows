@@ -1322,6 +1322,107 @@ function Build-AppArchitecture {
     }
 }
 
+# Function to regenerate BootstrapMate.ico from BootstrapMate.png
+function New-IcoFromPng {
+    $assetsDir = Join-Path $PSScriptRoot "src\BootstrapMate.App\Assets"
+    $icoPath   = Join-Path $assetsDir "BootstrapMate.ico"
+
+    # Prefer the repo-root PNG (source of truth); fall back to the Assets copy
+    $rootPng   = Join-Path $PSScriptRoot "..\BootstrapMate.png"
+    $sourcePng = if (Test-Path $rootPng) { $rootPng } else { Join-Path $assetsDir "BootstrapMate.png" }
+
+    if (-not (Test-Path $sourcePng)) {
+        Write-Log "ICO generation skipped — source PNG not found: $sourcePng" "WARN"
+        return
+    }
+
+    Write-Log "Regenerating ICO from: $(Resolve-Path $sourcePng)" "INFO"
+
+    try {
+        Add-Type -AssemblyName System.Drawing
+
+        $sizes  = @(16, 24, 32, 48, 64, 96, 128, 256)
+        $source = [System.Drawing.Bitmap]::new((Resolve-Path $sourcePng).Path)
+        $source.SetResolution(96, 96)
+
+        # Auto-crop: find tight bounding box of opaque pixels so the icon fills
+        # the ICO canvas without the transparent margins present in the source PNG
+        $minX = $source.Width;  $maxX = 0
+        $minY = $source.Height; $maxY = 0
+        for ($y = 0; $y -lt $source.Height; $y++) {
+            for ($x = 0; $x -lt $source.Width; $x++) {
+                if ($source.GetPixel($x, $y).A -gt 0) {
+                    if ($x -lt $minX) { $minX = $x }
+                    if ($x -gt $maxX) { $maxX = $x }
+                    if ($y -lt $minY) { $minY = $y }
+                    if ($y -gt $maxY) { $maxY = $y }
+                }
+            }
+        }
+        $cropW = $maxX - $minX + 1
+        $cropH = $maxY - $minY + 1
+        Write-Log "Auto-crop bounding box: ($minX,$minY) -> ($maxX,$maxY)  ${cropW}x${cropH}" "INFO"
+        $srcRect = [System.Drawing.Rectangle]::new($minX, $minY, $cropW, $cropH)
+
+        $pngDataList = @()
+        foreach ($size in $sizes) {
+            $bitmap = New-Object System.Drawing.Bitmap($size, $size, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+            $g = [System.Drawing.Graphics]::FromImage($bitmap)
+            $g.InterpolationMode  = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+            $g.SmoothingMode      = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality
+            $g.PixelOffsetMode    = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+            $g.CompositingQuality = [System.Drawing.Drawing2D.CompositingQuality]::HighQuality
+            $g.Clear([System.Drawing.Color]::Transparent)
+            # Use explicit pixel-unit source rect to bypass DPI metadata scaling
+            $destRect = [System.Drawing.Rectangle]::new(0, 0, $size, $size)
+            $g.DrawImage($source, $destRect, $srcRect, [System.Drawing.GraphicsUnit]::Pixel)
+            $g.Dispose()
+
+            $ms = New-Object System.IO.MemoryStream
+            $bitmap.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
+            $pngDataList += [PSCustomObject]@{ Size = $size; Data = $ms.ToArray() }
+            $ms.Dispose()
+            $bitmap.Dispose()
+        }
+        $source.Dispose()
+
+        # Write ICO (PNG-in-ICO format, Vista+)
+        $count  = $pngDataList.Count
+        $stream = New-Object System.IO.FileStream($icoPath, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write)
+        $writer = New-Object System.IO.BinaryWriter($stream)
+
+        $writer.Write([uint16]0)       # Reserved
+        $writer.Write([uint16]1)       # Type = ICO
+        $writer.Write([uint16]$count)
+
+        $offset = [uint32](6 + 16 * $count)
+        foreach ($entry in $pngDataList) {
+            $w = if ($entry.Size -eq 256) { 0 } else { [byte]$entry.Size }
+            $h = if ($entry.Size -eq 256) { 0 } else { [byte]$entry.Size }
+            $writer.Write([byte]$w)
+            $writer.Write([byte]$h)
+            $writer.Write([byte]0)    # ColorCount
+            $writer.Write([byte]0)    # Reserved
+            $writer.Write([uint16]1)  # Planes
+            $writer.Write([uint16]32) # BitCount
+            $writer.Write([uint32]$entry.Data.Length)
+            $writer.Write([uint32]$offset)
+            $offset += [uint32]$entry.Data.Length
+        }
+        foreach ($entry in $pngDataList) { $writer.Write($entry.Data) }
+
+        $writer.Flush()
+        $writer.Dispose()
+        $stream.Dispose()
+
+        Write-Log "ICO regenerated successfully ($count sizes: $($sizes -join ', ')px) → $icoPath" "SUCCESS"
+    }
+    catch {
+        Write-Log "ICO generation failed: $($_.Exception.Message)" "WARN"
+        Write-Log "Build will continue with the existing ICO file" "WARN"
+    }
+}
+
 # Function to update version in Program.cs
 function Update-Version {
     $programCsPath = Join-Path $PSScriptRoot "Program.cs"
@@ -1762,6 +1863,9 @@ try {
     if ($Global:EnterpriseCertSubject) {
         Write-Log "Enterprise certificate filter: subject='$Global:EnterpriseCertSubject'" "INFO"
     }
+
+    # Regenerate icon from latest PNG before building
+    New-IcoFromPng
 
     # Update version first
     $versionInfo = Update-Version
