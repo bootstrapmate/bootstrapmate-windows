@@ -79,6 +79,6 @@ public sealed partial class LogsPage : Page
         LogsViewModel.LogLineColor.Success => new SolidColorBrush(Microsoft.UI.Colors.MediumSeaGreen),
         LogsViewModel.LogLineColor.Debug   => new SolidColorBrush(Windows.UI.Color.FromArgb(204, 128, 128, 128)),
         LogsViewModel.LogLineColor.Header  => new SolidColorBrush(Microsoft.UI.Colors.CornflowerBlue),
-        _                                  => new SolidColorBrush(Microsoft.UI.Colors.White),
+        _ => (SolidColorBrush)Microsoft.UI.Xaml.Application.Current.Resources["TextFillColorPrimaryBrush"],
     };
 }

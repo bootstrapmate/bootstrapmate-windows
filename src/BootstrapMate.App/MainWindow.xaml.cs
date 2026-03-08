@@ -22,7 +22,7 @@ public sealed partial class MainWindow : Window
         var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
         var dpi = GetDpiForWindow(hwnd);
         var scale = dpi / 96.0;
-        AppWindow.Resize(new Windows.Graphics.SizeInt32((int)(1100 * scale), (int)(750 * scale)));
+        AppWindow.Resize(new Windows.Graphics.SizeInt32((int)(1200 * scale), (int)(820 * scale)));
 
         // Set the window icon from embedded asset
         AppWindow.SetIcon(System.IO.Path.Combine(
