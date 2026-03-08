@@ -10,11 +10,11 @@
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <ScrollViewer Padding="24,24,24,0">
-            <StackPanel Spacing="16">
+        <ScrollViewer Padding="28,24,28,24">
+            <StackPanel Spacing="20" MaxWidth="960" HorizontalAlignment="Center">
 
             <!-- ═══ App Info Header ═══ -->
-            <StackPanel HorizontalAlignment="Center" Spacing="8" Margin="0,8,0,0">
+            <StackPanel HorizontalAlignment="Center" Spacing="8" Margin="0,8,0,4">
                 <Image x:Name="AppIcon" Width="64" Height="64" HorizontalAlignment="Center" />
 
                 <TextBlock Text="BootstrapMate"
@@ -40,10 +40,8 @@
                            HorizontalAlignment="Center" />
             </StackPanel>
 
-            <MenuFlyoutSeparator />
-
-            <!-- ═══ Settings Grid: 2×2 layout ═══ -->
-            <Grid ColumnSpacing="20" RowSpacing="20">
+            <!-- ═══ Settings Grid: 2×2 card layout ═══ -->
+            <Grid ColumnSpacing="16" RowSpacing="16">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="*" />
@@ -53,10 +51,15 @@
                     <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
 
-                <!-- ── Connection Section ── -->
-                <StackPanel Grid.Row="0" Grid.Column="0" Spacing="4">
-                    <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,0,0,8">
-                        <FontIcon Glyph="&#xE943;" FontSize="16" VerticalAlignment="Center" />
+                <!-- ── Connection Card ── -->
+                <Border Grid.Row="0" Grid.Column="0"
+                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1" CornerRadius="8" Padding="20">
+                <StackPanel Spacing="8">
+                    <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,0,0,4">
+                        <FontIcon Glyph="&#xE943;" FontSize="20"
+                                  Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" VerticalAlignment="Center" />
                         <TextBlock Text="Connection" Style="{StaticResource SubtitleTextBlockStyle}" VerticalAlignment="Center" />
                     </StackPanel>
 
@@ -73,7 +76,7 @@
                     </StackPanel>
 
                     <!-- Authorization Header -->
-                    <TextBlock Text="Authorization Header" Style="{StaticResource CaptionTextBlockStyle}" Margin="0,8,0,0" />
+                    <TextBlock Text="Authorization Header" Style="{StaticResource CaptionTextBlockStyle}" Margin="0,4,0,0" />
                     <PasswordBox Password="{x:Bind ViewModel.AuthorizationHeader, Mode=TwoWay}"
                                  PlaceholderText="{x:Bind ViewModel.AuthPlaceholderText, Mode=OneWay}"
                                  IsEnabled="{x:Bind ViewModel.IsAuthHeaderLocked, Mode=OneWay, Converter={StaticResource InvertBool}}" />
@@ -85,7 +88,7 @@
                     </StackPanel>
 
                     <!-- Follow Redirects -->
-                    <ToggleSwitch Margin="0,8,0,0" OnContent="Follow HTTP Redirects" OffContent="Follow HTTP Redirects"
+                    <ToggleSwitch Margin="0,4,0,0" OnContent="Follow HTTP Redirects" OffContent="Follow HTTP Redirects"
                                   IsOn="{x:Bind ViewModel.FollowRedirects, Mode=TwoWay}"
                                   IsEnabled="{x:Bind ViewModel.IsFollowRedirectsLocked, Mode=OneWay, Converter={StaticResource InvertBool}}" />
                     <StackPanel Orientation="Horizontal" Spacing="4"
@@ -95,11 +98,17 @@
                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                     </StackPanel>
                 </StackPanel>
+                </Border>
 
-                <!-- ── Behavior Section ── -->
-                <StackPanel Grid.Row="0" Grid.Column="1" Spacing="4">
-                    <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,0,0,8">
-                        <FontIcon Glyph="&#xE713;" FontSize="16" VerticalAlignment="Center" />
+                <!-- ── Behavior Card ── -->
+                <Border Grid.Row="0" Grid.Column="1"
+                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1" CornerRadius="8" Padding="20">
+                <StackPanel Spacing="8">
+                    <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,0,0,4">
+                        <FontIcon Glyph="&#xE713;" FontSize="20"
+                                  Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" VerticalAlignment="Center" />
                         <TextBlock Text="Behavior" Style="{StaticResource SubtitleTextBlockStyle}" VerticalAlignment="Center" />
                     </StackPanel>
 
@@ -143,11 +152,17 @@
                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                     </StackPanel>
                 </StackPanel>
+                </Border>
 
-                <!-- ── Dialog Section ── -->
-                <StackPanel Grid.Row="1" Grid.Column="0" Spacing="4">
-                    <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,0,0,8">
-                        <FontIcon Glyph="&#xE8F2;" FontSize="16" VerticalAlignment="Center" />
+                <!-- ── Dialog Card ── -->
+                <Border Grid.Row="1" Grid.Column="0"
+                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1" CornerRadius="8" Padding="20">
+                <StackPanel Spacing="8">
+                    <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,0,0,4">
+                        <FontIcon Glyph="&#xE8F2;" FontSize="20"
+                                  Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" VerticalAlignment="Center" />
                         <TextBlock Text="Dialog" Style="{StaticResource SubtitleTextBlockStyle}" VerticalAlignment="Center" />
                     </StackPanel>
 
@@ -161,23 +176,29 @@
                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                     </StackPanel>
 
-                    <TextBlock Text="Title" Style="{StaticResource CaptionTextBlockStyle}" Margin="0,8,0,0" />
+                    <TextBlock Text="Title" Style="{StaticResource CaptionTextBlockStyle}" Margin="0,4,0,0" />
                     <TextBox Text="{x:Bind ViewModel.DialogTitle, Mode=TwoWay}" PlaceholderText="Setting Up Your Device" />
 
-                    <TextBlock Text="Message" Style="{StaticResource CaptionTextBlockStyle}" Margin="0,8,0,0" />
+                    <TextBlock Text="Message" Style="{StaticResource CaptionTextBlockStyle}" Margin="0,4,0,0" />
                     <TextBox Text="{x:Bind ViewModel.DialogMessage, Mode=TwoWay}" PlaceholderText="Please wait while we install required software..." />
 
-                    <TextBlock Text="Icon" Style="{StaticResource CaptionTextBlockStyle}" Margin="0,8,0,0" />
+                    <TextBlock Text="Icon" Style="{StaticResource CaptionTextBlockStyle}" Margin="0,4,0,0" />
                     <TextBox Text="{x:Bind ViewModel.DialogIcon, Mode=TwoWay}" PlaceholderText="Path to icon file (.ico, .png)" />
 
-                    <ToggleSwitch Margin="0,8,0,0" OnContent="Blur screen behind dialog" OffContent="Blur screen behind dialog"
+                    <ToggleSwitch Margin="0,4,0,0" OnContent="Blur screen behind dialog" OffContent="Blur screen behind dialog"
                                   IsOn="{x:Bind ViewModel.BlurScreen, Mode=TwoWay}" />
                 </StackPanel>
+                </Border>
 
-                <!-- ── Advanced Section ── -->
-                <StackPanel Grid.Row="1" Grid.Column="1" Spacing="4">
-                    <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,0,0,8">
-                        <FontIcon Glyph="&#xE90F;" FontSize="16" VerticalAlignment="Center" />
+                <!-- ── Advanced Card ── -->
+                <Border Grid.Row="1" Grid.Column="1"
+                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1" CornerRadius="8" Padding="20">
+                <StackPanel Spacing="8">
+                    <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,0,0,4">
+                        <FontIcon Glyph="&#xE90F;" FontSize="20"
+                                  Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" VerticalAlignment="Center" />
                         <TextBlock Text="Advanced" Style="{StaticResource SubtitleTextBlockStyle}" VerticalAlignment="Center" />
                     </StackPanel>
 
@@ -192,7 +213,7 @@
                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                     </StackPanel>
 
-                    <TextBlock Text="Network Timeout" Style="{StaticResource CaptionTextBlockStyle}" Margin="0,8,0,0" />
+                    <TextBlock Text="Network Timeout" Style="{StaticResource CaptionTextBlockStyle}" Margin="0,4,0,0" />
                     <StackPanel Orientation="Horizontal" Spacing="8">
                         <NumberBox Value="{x:Bind ViewModel.NetworkTimeoutValue, Mode=TwoWay}" Minimum="10" Maximum="600"
                                    SpinButtonPlacementMode="Compact" SmallChange="10"
@@ -208,6 +229,7 @@
                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                     </StackPanel>
                 </StackPanel>
+                </Border>
             </Grid>
 
         </StackPanel>

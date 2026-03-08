@@ -8,6 +8,8 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
@@ -54,11 +56,32 @@
             </StackPanel>
         </Grid>
 
+        <!-- ═══ Progress Bar + Step Info ═══ -->
+        <StackPanel x:Name="ProgressPanel" Grid.Row="1" Spacing="6" Padding="24,0,24,12"
+                    Visibility="Collapsed">
+            <ProgressBar x:Name="StepProgress" IsIndeterminate="True"
+                         Height="4" CornerRadius="2" />
+            <Grid>
+                <TextBlock x:Name="StepItemLabel"
+                           Style="{StaticResource CaptionTextBlockStyle}"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                           TextTrimming="CharacterEllipsis" />
+                <TextBlock x:Name="StepCountLabel"
+                           Style="{StaticResource CaptionTextBlockStyle}"
+                           Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                           HorizontalAlignment="Right" />
+            </Grid>
+        </StackPanel>
+
+        <!-- ═══ Error / Success Banner ═══ -->
+        <InfoBar x:Name="ResultBanner" Grid.Row="2"
+                 IsOpen="False" IsClosable="True" Margin="24,0,24,8" />
+
         <!-- ═══ Divider ═══ -->
-        <MenuFlyoutSeparator Grid.Row="1" />
+        <MenuFlyoutSeparator Grid.Row="3" />
 
         <!-- ═══ Console Output ═══ -->
-        <ScrollViewer x:Name="ConsoleScroller" Grid.Row="2" Padding="12"
+        <ScrollViewer x:Name="ConsoleScroller" Grid.Row="4" Padding="12"
                       Background="{ThemeResource SystemControlBackgroundChromeMediumLowBrush}">
             <RichTextBlock x:Name="ConsoleOutput" IsTextSelectionEnabled="True"
                            FontFamily="Cascadia Mono, Consolas, Courier New" FontSize="12"

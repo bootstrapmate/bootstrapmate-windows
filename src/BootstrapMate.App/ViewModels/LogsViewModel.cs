@@ -32,13 +32,20 @@ public partial class LogsViewModel : ObservableObject
 
     // ── Models ───────────────────────────────────────────────────
 
-    public record LogFile(string Name, string Path, DateTime? Date)
+    public record LogFile(string Name, string Path, DateTime? Date, long SizeBytes)
     {
         public string DisplayDate => Date is { } d
             ? $"{d:MMMM} {OrdinalDay(d.Day)} {d:yyyy}"
             : Name;
 
         public string DisplayTime => Date?.ToString("yyyy-MM-dd HH:mm:ss") ?? "";
+
+        public string DisplaySize => SizeBytes switch
+        {
+            < 1024        => $"{SizeBytes} B",
+            < 1024 * 1024 => $"{SizeBytes / 1024.0:0.#} KB",
+            _             => $"{SizeBytes / (1024.0 * 1024):0.#} MB",
+        };
 
         private static string OrdinalDay(int day) => (day % 10, day) switch
         {
@@ -70,7 +77,9 @@ public partial class LogsViewModel : ObservableObject
                 var baseName = System.IO.Path.GetFileNameWithoutExtension(name);
                 DateTime? date = DateTime.TryParseExact(baseName, "yyyy-MM-dd-HHmmss",
                     CultureInfo.InvariantCulture, DateTimeStyles.None, out var d) ? d : null;
-                return new LogFile(name, path, date);
+                long size = 0;
+                try { size = new FileInfo(path).Length; } catch { }
+                return new LogFile(name, path, date, size);
             })
             .OrderByDescending(f => f.Date ?? DateTime.MinValue)
             .ToList();
