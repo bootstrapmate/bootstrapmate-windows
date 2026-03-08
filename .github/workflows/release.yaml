@@ -212,21 +212,18 @@ jobs:
           $binDir = (Resolve-Path "publish/executables/${{ matrix.arch }}").Path
           $appDir = (Resolve-Path "publish/app/${{ matrix.arch }}").Path
 
-          # Generate run.ps1 for MSI
-          $runPs1 = @"
-          Write-Host "Running BootstrapMate..."
-          & 'C:\Program Files\BootstrapMate\installapplications.exe' --url `$args[0] --no-dialog
-          "@
-          Set-Content -Path "installer/run.ps1" -Value $runPs1 -Encoding UTF8
-
-          dotnet build installer/BootstrapMate.Installer.wixproj `
-            --configuration Release `
-            --verbosity normal `
-            "-p:Platform=${{ matrix.arch }}" `
-            "-p:ProductVersion=${{ steps.version.outputs.msi }}" `
-            "-p:BinDir=$binDir" `
-            "-p:AppDir=$appDir" `
+          $dotnetArgs = @(
+            "build", "installer/BootstrapMate.Installer.wixproj",
+            "--configuration", "Release",
+            "--verbosity", "detailed",
+            "-p:Platform=${{ matrix.arch }}",
+            "-p:ProductVersion=${{ steps.version.outputs.msi }}",
+            "-p:BinDir=$binDir",
+            "-p:AppDir=$appDir",
             "-p:BootstrapUrl="
+          )
+          dotnet @dotnetArgs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       # - name: Sign MSI
       #   if: startsWith(github.ref, 'refs/tags/v') && env.CERT_THUMBPRINT != ''
