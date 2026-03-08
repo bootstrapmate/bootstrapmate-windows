@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.IO.Pipes;
 using System.Net.Http;
 using System.Threading.Tasks;
 using System.Text.Json;
@@ -11,6 +12,7 @@ using System.IO.Compression;
 using System.Linq;
 using System.Xml.Linq;
 using Microsoft.Win32;
+using BootstrapMate.Core;
 
 namespace BootstrapMate
 {
@@ -33,6 +35,9 @@ namespace BootstrapMate
         // System sound suppression
         private static uint originalVolume = 0;
         private static bool soundsSuppressed = false;
+
+        // Named pipe writer for GUI output streaming
+        private static StreamWriter? _pipeWriter;
         
         private static string LogDirectory = @"C:\ProgramData\ManagedBootstrap\logs";
         private static string CacheDirectory = @"C:\ProgramData\ManagedBootstrap\cache";
@@ -319,41 +324,65 @@ namespace BootstrapMate
             // Parse command line arguments
             bool forceDownload = false;
             bool noDialog = false;
+            bool blurScreen = false;
             string dialogTitle = "Setting Up Your Device";
             string dialogMessage = "Please wait while we install required software...";
             string manifestUrl = "";
+            string? pipeName = null;
             
             if (args.Length == 0)
             {
-                if (!silentMode)
+                // No args: try to load manifest URL from CSP policy or user settings
+                var config = ConfigManager.Instance;
+                var effectiveUrl = config.GetEffectiveManifestUrl();
+                if (!string.IsNullOrEmpty(effectiveUrl))
                 {
-                    Console.WriteLine("Usage:");
-                    Console.WriteLine("  installapplications.exe --url <manifest-url>");
-                    Console.WriteLine("  installapplications.exe --help");
-                    Console.WriteLine("  installapplications.exe --version");
-                    Console.WriteLine("  installapplications.exe --status");
-                    Console.WriteLine("  installapplications.exe --clear-cache");
-                    Console.WriteLine("  installapplications.exe --reset-chocolatey");
-                    Console.WriteLine("  installapplications.exe --url <manifest-url> --force");
-                    Console.WriteLine("  installapplications.exe --url <manifest-url> --verbose");
-                    Console.WriteLine("  installapplications.exe --url <manifest-url> --silent");
-                    Console.WriteLine();
-                    Console.WriteLine("Options:");
-                    Console.WriteLine("  --url <url>     URL to the bootstrapmate.json manifest");
-                    Console.WriteLine("  --force         (Deprecated - downloads are always fresh. Cache is for inspection only)");
-                    Console.WriteLine("  --verbose       Show detailed logging output");
-                    Console.WriteLine("  --silent        Run completely silently (no console output)");
-                    Console.WriteLine("  --no-dialog     Disable progress dialog (csharpdialog)");
-                    Console.WriteLine("  --dialog-title  Custom title for progress dialog");
-                    Console.WriteLine("  --dialog-message  Custom message for progress dialog");
-                    Console.WriteLine("  --help          Show this help message");
-                    Console.WriteLine("  --version       Show version information");
-                    Console.WriteLine("  --status        Show current installation status");
-                    Console.WriteLine("  --clear-status  Clear all installation status data");
-                    Console.WriteLine("  --clear-cache   Clear all caches including failed installation files (BootstrapMate + Chocolatey)");
-                    Console.WriteLine("  --reset-chocolatey  Complete Chocolatey reset (removes corrupted lib folder)");
+                    manifestUrl = effectiveUrl;
+                    Logger.Info($"Settings loaded from: {config.ManifestUrlSource}");
+                    if (!silentMode)
+                        Console.WriteLine($"[i] Manifest URL loaded from {config.ManifestUrlSource}: {manifestUrl}");
+                    
+                    // Apply other settings from config
+                    noDialog = config.Config.NoDialog;
+                    blurScreen = config.Config.BlurScreen;
+                    dialogTitle = config.Config.DialogTitle;
+                    dialogMessage = config.Config.DialogMessage;
                 }
-                return 0;
+                else
+                {
+                    if (!silentMode)
+                    {
+                        Console.WriteLine("Usage:");
+                        Console.WriteLine("  installapplications.exe --url <manifest-url>");
+                        Console.WriteLine("  installapplications.exe --help");
+                        Console.WriteLine("  installapplications.exe --version");
+                        Console.WriteLine("  installapplications.exe --status");
+                        Console.WriteLine("  installapplications.exe --clear-cache");
+                        Console.WriteLine("  installapplications.exe --reset-chocolatey");
+                        Console.WriteLine("  installapplications.exe --url <manifest-url> --force");
+                        Console.WriteLine("  installapplications.exe --url <manifest-url> --verbose");
+                        Console.WriteLine("  installapplications.exe --url <manifest-url> --silent");
+                        Console.WriteLine();
+                        Console.WriteLine("Options:");
+                        Console.WriteLine("  --url <url>     URL to the bootstrapmate.json manifest");
+                        Console.WriteLine("  --force         (Deprecated - downloads are always fresh. Cache is for inspection only)");
+                        Console.WriteLine("  --verbose       Show detailed logging output");
+                        Console.WriteLine("  --silent        Run completely silently (no console output)");
+                        Console.WriteLine("  --no-dialog     Disable progress dialog (csharpdialog)");
+                        Console.WriteLine("  --dialog-title  Custom title for progress dialog");
+                        Console.WriteLine("  --dialog-message  Custom message for progress dialog");
+                        Console.WriteLine("  --pipe <name>   Named pipe for GUI output streaming");
+                        Console.WriteLine("  --save-settings Save GUI settings to registry");
+                        Console.WriteLine("  --save-settings-file <path>  Save settings from JSON file to registry");
+                        Console.WriteLine("  --help          Show this help message");
+                        Console.WriteLine("  --version       Show version information");
+                        Console.WriteLine("  --status        Show current installation status");
+                        Console.WriteLine("  --clear-status  Clear all installation status data");
+                        Console.WriteLine("  --clear-cache   Clear all caches including failed installation files (BootstrapMate + Chocolatey)");
+                        Console.WriteLine("  --reset-chocolatey  Complete Chocolatey reset (removes corrupted lib folder)");
+                    }
+                    return 0;
+                }
             }
             
             for (int i = 0; i < args.Length; i++)
@@ -420,6 +449,10 @@ namespace BootstrapMate
                     case "--no-dialog":
                         noDialog = true;
                         break;
+
+                    case "--blur-screen":
+                        blurScreen = true;
+                        break;
                         
                     case "--dialog-title":
                         if (i + 1 < args.Length)
@@ -436,20 +469,156 @@ namespace BootstrapMate
                             i++;
                         }
                         break;
+
+                    case "--pipe":
+                        if (i + 1 < args.Length)
+                        {
+                            pipeName = args[i + 1];
+                            i++;
+                        }
+                        break;
+
+                    case "--save-settings":
+                        return SaveSettingsFromArgs(args);
+
+                    case "--save-settings-file":
+                        if (i + 1 < args.Length)
+                            return SaveSettingsFromFile(args[++i]);
+                        Console.WriteLine("ERROR: --save-settings-file requires a file path");
+                        return 1;
+                }
+            }
+
+            // If no --url was provided via CLI, try ConfigManager (CSP policy / user settings)
+            if (string.IsNullOrEmpty(manifestUrl))
+            {
+                var config = ConfigManager.Instance;
+                config.ApplyCliArguments(noDialog: noDialog);
+                var effectiveUrl = config.GetEffectiveManifestUrl();
+                if (!string.IsNullOrEmpty(effectiveUrl))
+                {
+                    manifestUrl = effectiveUrl;
+                    Logger.Info($"Settings loaded from: {config.ManifestUrlSource}");
+                    if (!silentMode)
+                        Console.WriteLine($"[i] Manifest URL loaded from {config.ManifestUrlSource}: {manifestUrl}");
+                    
+                    // Apply config-derived settings (CLI flags override)
+                    if (!noDialog) noDialog = config.Config.NoDialog;
+                    if (!blurScreen) blurScreen = config.Config.BlurScreen;
+                    dialogTitle = config.Config.DialogTitle;
+                    dialogMessage = config.Config.DialogMessage;
+                }
+            }
+
+            // Connect named pipe for GUI streaming (if requested)
+            if (!string.IsNullOrEmpty(pipeName))
+            {
+                try
+                {
+                    var pipeClient = new NamedPipeClientStream(".", pipeName, PipeDirection.Out);
+                    pipeClient.Connect(timeout: 5000);
+                    _pipeWriter = new StreamWriter(pipeClient) { AutoFlush = true };
+                    Logger.SetPipeWriter(_pipeWriter);
+                    Logger.Debug($"Connected to GUI pipe: {pipeName}");
+                }
+                catch (Exception ex)
+                {
+                    Logger.Warning($"Could not connect to GUI pipe: {ex.Message}");
                 }
             }
 
             // Process manifest if URL was provided
             if (!string.IsNullOrEmpty(manifestUrl))
             {
-                return await ProcessManifest(manifestUrl, forceDownload, noDialog, dialogTitle, dialogMessage);
+                return await ProcessManifest(manifestUrl, forceDownload, noDialog, blurScreen, dialogTitle, dialogMessage);
             }
             
-            Console.WriteLine("ERROR: Invalid arguments. Use --help for usage information.");
+            Console.WriteLine("ERROR: No manifest URL provided. Use --url <url> or configure via CSP policy / registry settings.");
             return 1;
         }
+
+        /// <summary>
+        /// Saves settings from a JSON file. Called by the GUI app via elevated process.
+        /// </summary>
+        private static int SaveSettingsFromFile(string filePath)
+        {
+            try
+            {
+                var json = File.ReadAllText(filePath);
+                var config = System.Text.Json.JsonSerializer.Deserialize<BootstrapMateConfig>(json);
+                if (config is null)
+                {
+                    Logger.Error("Failed to deserialize settings file.");
+                    return 1;
+                }
+                ConfigManager.SaveUserSettings(config);
+                Logger.Info("Settings saved from file successfully.");
+                return 0;
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"Failed to save settings from file: {ex.Message}");
+                return 1;
+            }
+            finally
+            {
+                try { File.Delete(filePath); } catch { }
+            }
+        }
+
+        /// <summary>
+        /// Saves settings from CLI args to user registry. Called by the GUI app via elevated process.
+        /// Expected format: --save-settings --url X --dialog-title Y ...
+        /// </summary>
+        private static int SaveSettingsFromArgs(string[] args)
+        {
+            var config = new BootstrapMateConfig();
+            
+            for (int i = 0; i < args.Length; i++)
+            {
+                switch (args[i].ToLower())
+                {
+                    case "--url" when i + 1 < args.Length:
+                        config.ManifestUrl = args[++i];
+                        break;
+                    case "--no-dialog":
+                        config.NoDialog = true;
+                        break;
+                    case "--dialog-title" when i + 1 < args.Length:
+                        config.DialogTitle = args[++i];
+                        break;
+                    case "--dialog-message" when i + 1 < args.Length:
+                        config.DialogMessage = args[++i];
+                        break;
+                    case "--dialog-icon" when i + 1 < args.Length:
+                        config.DialogIcon = args[++i];
+                        break;
+                    case "--silent":
+                        config.SilentMode = true;
+                        break;
+                    case "--verbose":
+                        config.VerboseMode = true;
+                        break;
+                    case "--force":
+                        // Not persisted — runtime flag only
+                        break;
+                }
+            }
+
+            try
+            {
+                ConfigManager.SaveUserSettings(config);
+                Logger.Info("Settings saved to registry successfully.");
+                return 0;
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"Failed to save settings: {ex.Message}");
+                return 1;
+            }
+        }
         
-        static async Task<int> ProcessManifest(string manifestUrl, bool forceDownload = false, bool noDialog = false, string dialogTitle = "Setting Up Your Device", string dialogMessage = "Please wait while we install required software...")
+        static async Task<int> ProcessManifest(string manifestUrl, bool forceDownload = false, bool noDialog = false, bool blurScreen = false, string dialogTitle = "Setting Up Your Device", string dialogMessage = "Please wait while we install required software...")
         {
             try
             {
@@ -499,7 +668,7 @@ namespace BootstrapMate
                         dialogMessage,
                         totalPackages,
                         icon: null,
-                        fullScreen: false,
+                        fullScreen: blurScreen,
                         kioskMode: false
                     );
                     

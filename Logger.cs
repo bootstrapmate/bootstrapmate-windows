@@ -18,6 +18,13 @@ namespace BootstrapMate
         private static bool _verboseConsole = false;
         private static bool _silentMode = false;
         private static DateTime _sessionStartTime;
+        private static TextWriter? _pipeWriter;
+
+        /// <summary>
+        /// Sets an additional output writer (e.g. named pipe) that receives all log lines.
+        /// Used by the GUI app to stream real-time output.
+        /// </summary>
+        public static void SetPipeWriter(TextWriter? writer) => _pipeWriter = writer;
         
         public static void Initialize(string logDirectory, string version = "Unknown", bool verboseConsole = false, bool silentMode = false)
         {
@@ -93,6 +100,9 @@ namespace BootstrapMate
 
             // Write to console based on level and verbose setting
             WriteToConsole(level, message);
+
+            // Write to pipe for GUI streaming
+            WriteToPipe(level, message);
         }
 
         private static void WriteToFile(string message)
@@ -137,6 +147,21 @@ namespace BootstrapMate
             finally
             {
                 Console.ForegroundColor = originalColor;
+            }
+        }
+
+        private static void WriteToPipe(LogLevel level, string message)
+        {
+            if (_pipeWriter is null) return;
+            try
+            {
+                var (icon, _) = GetDisplayFormat(level);
+                _pipeWriter.WriteLine($"{icon} {message}");
+            }
+            catch
+            {
+                // Pipe broken — silently stop writing
+                _pipeWriter = null;
             }
         }
 

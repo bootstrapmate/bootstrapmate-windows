@@ -1,0 +1,146 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  BootstrapMate ADML Language File (English)
+  Companion to BootstrapMate.admx
+-->
+<policyDefinitionResources xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+                           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                           revision="1.0"
+                           schemaVersion="1.0"
+                           xmlns="http://schemas.microsoft.com/GroupPolicy/2006/07/PolicyDefinitions">
+
+  <displayName>BootstrapMate</displayName>
+  <description>BootstrapMate enterprise device provisioning settings</description>
+
+  <resources>
+    <stringTable>
+      <!-- Categories -->
+      <string id="Cat_BootstrapMate">BootstrapMate</string>
+      <string id="Cat_Connection">Connection</string>
+      <string id="Cat_Behavior">Behavior</string>
+      <string id="Cat_Dialog">Dialog</string>
+      <string id="Cat_Advanced">Advanced</string>
+
+      <!-- Connection -->
+      <string id="ManifestUrl">Manifest URL</string>
+      <string id="ManifestUrl_Help">URL to the bootstrapmate.json manifest file that defines packages to install.
+
+Example: https://example.com/bootstrap/bootstrapmate.json
+
+When set, BootstrapMate will automatically use this URL without requiring the --url command-line argument or run.ps1 script.</string>
+
+      <string id="AuthorizationHeader">Authorization Header</string>
+      <string id="AuthorizationHeader_Help">Authorization header value sent with manifest and package download requests.
+
+Example: Bearer eyJhbGciOiJIUzI1NiIs...
+
+Leave empty if your manifest endpoint does not require authentication.</string>
+
+      <string id="FollowRedirects">Follow HTTP Redirects</string>
+      <string id="FollowRedirects_Help">When enabled, BootstrapMate will follow HTTP 301/302 redirects when downloading the manifest and packages.
+
+Default: Disabled</string>
+
+      <!-- Behavior -->
+      <string id="Reboot">Reboot After Completion</string>
+      <string id="Reboot_Help">When enabled, the device will automatically reboot after all packages have been successfully installed.
+
+Default: Disabled</string>
+
+      <string id="SilentMode">Silent Mode</string>
+      <string id="SilentMode_Help">When enabled, all console output is suppressed. Log files are still written.
+
+Default: Disabled</string>
+
+      <string id="VerboseMode">Verbose Logging</string>
+      <string id="VerboseMode_Help">When enabled, debug-level messages are shown in console output and logs.
+
+Default: Disabled</string>
+
+      <string id="DryRun">Dry Run</string>
+      <string id="DryRun_Help">When enabled, BootstrapMate downloads and validates packages but does not actually install them. Useful for testing manifests.
+
+Default: Disabled</string>
+
+      <!-- Dialog -->
+      <string id="EnableDialog">Enable Progress Dialog</string>
+      <string id="EnableDialog_Help">When enabled, a progress dialog (csharpdialog) is shown during installation if available.
+
+Default: Enabled</string>
+
+      <string id="DialogTitle">Dialog Title</string>
+      <string id="DialogTitle_Help">Custom title text shown in the progress dialog window.
+
+Default: Setting Up Your Device</string>
+
+      <string id="DialogMessage">Dialog Message</string>
+      <string id="DialogMessage_Help">Custom message text shown in the progress dialog window.
+
+Default: Please wait while we install required software...</string>
+
+      <string id="DialogIcon">Dialog Icon</string>
+      <string id="DialogIcon_Help">Path to a custom icon file (.ico, .png) shown in the progress dialog.
+
+Leave empty to use the default icon.</string>
+
+      <string id="BlurScreen">Blur Screen Behind Dialog</string>
+      <string id="BlurScreen_Help">When enabled, the screen behind the progress dialog is blurred to prevent user interaction during setup.
+
+Default: Disabled</string>
+
+      <!-- Advanced -->
+      <string id="CustomInstallPath">Custom Install Path</string>
+      <string id="CustomInstallPath_Help">Override the default BootstrapMate installation directory.
+
+Default: C:\Program Files\BootstrapMate</string>
+
+      <string id="NetworkTimeout">Network Timeout (seconds)</string>
+      <string id="NetworkTimeout_Help">Maximum time in seconds to wait for network operations (manifest download, package download).
+
+Range: 10–600 seconds
+Default: 120 seconds</string>
+    </stringTable>
+
+    <presentationTable>
+      <presentation id="ManifestUrl">
+        <textBox refId="ManifestUrl_Value">
+          <label>Manifest URL:</label>
+        </textBox>
+      </presentation>
+
+      <presentation id="AuthorizationHeader">
+        <textBox refId="AuthorizationHeader_Value">
+          <label>Authorization Header:</label>
+        </textBox>
+      </presentation>
+
+      <presentation id="DialogTitle">
+        <textBox refId="DialogTitle_Value">
+          <label>Title:</label>
+        </textBox>
+      </presentation>
+
+      <presentation id="DialogMessage">
+        <textBox refId="DialogMessage_Value">
+          <label>Message:</label>
+        </textBox>
+      </presentation>
+
+      <presentation id="DialogIcon">
+        <textBox refId="DialogIcon_Value">
+          <label>Icon Path:</label>
+        </textBox>
+      </presentation>
+
+      <presentation id="CustomInstallPath">
+        <textBox refId="CustomInstallPath_Value">
+          <label>Install Path:</label>
+        </textBox>
+      </presentation>
+
+      <presentation id="NetworkTimeout">
+        <decimalTextBox refId="NetworkTimeout_Value" defaultValue="120">Timeout (seconds):</decimalTextBox>
+      </presentation>
+    </presentationTable>
+  </resources>
+</policyDefinitionResources>
