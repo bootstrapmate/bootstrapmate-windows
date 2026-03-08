@@ -78,8 +78,11 @@
       <Environment Id="UpdatePath" Name="PATH" Value="[INSTALLDIR]" Permanent="no" Part="last" Action="set" Separator=";" System="yes" />
     </Component>
     
-    <!-- Custom Properties for Bootstrap URL - Set via build parameter -->
+    <!-- Custom Properties for Bootstrap URL - Set via build parameter.
+         Only emitted when BootstrapUrl was passed as a non-empty DefineConstant. -->
+    <?ifdef var.BootstrapUrl ?>
     <Property Id="BOOTSTRAP_URL" Value="$(var.BootstrapUrl)" />
+    <?endif ?>
     
     <CustomAction Id="RunBootstrapMate" 
                   Directory="INSTALLDIR" 
