@@ -391,6 +391,14 @@ function Get-BestCertificate {
         Write-Log "No certificate found matching BOOTSTRAPMATE_CERT_SUBJECT='$Global:EnterpriseCertSubject'" "WARN"
     }
 
+    # Priority 3: No env vars set — scan for any valid code-signing certificate
+    $allCerts = Find-CodeSigningCerts
+    if ($allCerts) {
+        $cert = $allCerts | Select-Object -First 1
+        Write-Log "Auto-detected code signing certificate (store scan): $($cert.Subject)" "SUCCESS"
+        return $cert
+    }
+
     return $null
 }
 
