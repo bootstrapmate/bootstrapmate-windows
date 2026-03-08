@@ -86,92 +86,79 @@ jobs:
           $outputDir = (Resolve-Path "publish/app/$arch").Path
           $appProjectDir = Join-Path $PWD "src/BootstrapMate.App"
 
-          # Find makepri.exe from Windows SDK
-          $sdkBin = "${env:ProgramFiles(x86)}\Windows Kits\10\bin"
-          $makepri = Get-ChildItem -Path $sdkBin -Filter "makepri.exe" -Recurse -ErrorAction SilentlyContinue |
-            Where-Object { $_.DirectoryName -match "x64" } |
-            Sort-Object { [version]($_.DirectoryName -replace '.*\\(\d+\.\d+\.\d+\.\d+)\\.*','$1') } -Descending |
-            Select-Object -First 1
-
+          # Find makepri.exe — search both Program Files roots, prefer x64 tool
+          $makepri = $null
+          $sdkBinRoots = @(
+            "$env:ProgramFiles\Windows Kits\10\bin",
+            "${env:ProgramFiles(x86)}\Windows Kits\10\bin"
+          ) | Where-Object { Test-Path $_ }
+          foreach ($root in $sdkBinRoots) {
+            foreach ($toolArch in @("x64", "arm64", "x86")) {
+              $hit = Get-ChildItem "$root\*\$toolArch\makepri.exe" -ErrorAction SilentlyContinue |
+                Sort-Object { [version]($_.FullName -replace '.*\\(\d+\.\d+\.\d+\.\d+)\\.*','$1') } -Descending |
+                Select-Object -First 1
+              if ($hit) { $makepri = $hit.FullName; break }
+            }
+            if ($makepri) { break }
+          }
           if (-not $makepri) {
-            Write-Host "::warning::makepri.exe not found — resources.pri will not be generated"
+            Write-Host "::warning::makepri.exe not found — skipping resources.pri generation"
+            exit 0
+          }
+          Write-Host "Using makepri: $makepri"
+
+          # Find XBF files produced by dotnet publish (in obj/Release under the project dir)
+          $xbfFiles = Get-ChildItem "$appProjectDir\obj\Release" -Recurse -Filter "*.xbf" -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match [regex]::Escape("\win-$arch\") }
+          if (-not $xbfFiles) {
+            Write-Host "::warning::No XBF files found for win-$arch — skipping resources.pri generation"
             exit 0
           }
 
-          Write-Host "Using makepri: $($makepri.FullName)"
-
-          # Locate XBF files from the intermediate output
-          $rid = "win-$arch"
-          $objDir = Join-Path $appProjectDir "obj/Release/net10.0-windows10.0.19041.0/$rid"
-          $xbfs = Get-ChildItem -Path $objDir -Filter "*.xbf" -Recurse -ErrorAction SilentlyContinue
-
-          if (-not $xbfs -or $xbfs.Count -eq 0) {
-            Write-Host "::warning::No XBF files found in $objDir"
-            exit 0
-          }
-
-          Write-Host "Found $($xbfs.Count) XBF file(s)"
+          # Determine XBF root (the win-$arch intermediate directory)
+          $xbfRootPath = ($xbfFiles[0].FullName -split [regex]::Escape("\win-$arch\"))[0] + "\win-$arch"
+          Write-Host "Found $($xbfFiles.Count) XBF file(s) in: $xbfRootPath"
 
           # Create staging directory
-          $stagingDir = Join-Path $env:RUNNER_TEMP "pri-staging"
-          New-Item -ItemType Directory -Path $stagingDir -Force | Out-Null
+          $stagingDir = Join-Path ([System.IO.Path]::GetTempPath()) "bootstrapmate-pri-$arch"
+          if (Test-Path $stagingDir) { Remove-Item $stagingDir -Recurse -Force }
+          New-Item -ItemType Directory $stagingDir -Force | Out-Null
 
-          foreach ($xbf in $xbfs) {
-            $relative = $xbf.FullName.Substring($objDir.Length + 1)
-            $dest = Join-Path $stagingDir $relative
-            $destDir = Split-Path $dest -Parent
-            if (-not (Test-Path $destDir)) { New-Item -ItemType Directory -Path $destDir -Force | Out-Null }
-            Copy-Item $xbf.FullName $dest -Force
-            Copy-Item $xbf.FullName (Join-Path $outputDir $relative) -Force
-            Write-Host "  XBF: $relative"
+          # Copy XBF files to staging (for makepri indexing) and to output dir (for runtime)
+          foreach ($xbf in $xbfFiles) {
+            $rel = $xbf.FullName.Substring($xbfRootPath.Length).TrimStart('\')
+            $stageDest = Join-Path $stagingDir $rel
+            $stageDestDir = Split-Path $stageDest
+            if (-not (Test-Path $stageDestDir)) { New-Item -ItemType Directory $stageDestDir -Force | Out-Null }
+            Copy-Item $xbf.FullName $stageDest -Force
+            $outDest = Join-Path $outputDir $rel
+            $outDestDir = Split-Path $outDest
+            if (-not (Test-Path $outDestDir)) { New-Item -ItemType Directory $outDestDir -Force | Out-Null }
+            Copy-Item $xbf.FullName $outDest -Force
+            Write-Host "  XBF: $rel"
           }
 
-          # Copy framework PRI files from WinAppSDK NuGet package
-          $nugetCache = Join-Path $env:USERPROFILE ".nuget/packages"
-          $winAppSdkPris = Get-ChildItem -Path $nugetCache -Filter "*.pri" -Recurse -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -like "*microsoft.windowsappsdk*" -and $_.FullName -like "*Microsoft.UI*" } |
-            Sort-Object Length -Descending | Select-Object -First 2
-
-          foreach ($pri in $winAppSdkPris) {
-            Copy-Item $pri.FullName (Join-Path $stagingDir $pri.Name) -Force
-            $sizeKB = [math]::Round($pri.Length / 1KB)
-            Write-Host "  Framework PRI: $($pri.Name) ($sizeKB KB)"
+          # Copy WinUI3 framework PRIs from the publish output dir to staging so makepri merges them
+          Get-ChildItem $outputDir -Filter "Microsoft.*.pri" -ErrorAction SilentlyContinue | ForEach-Object {
+            Copy-Item $_.FullName (Join-Path $stagingDir $_.Name) -Force
+            Write-Host "  Framework PRI: $($_.Name) ($([math]::Round($_.Length/1KB)) KB)"
           }
 
-          # Create priconfig.xml
+          # Generate priconfig.xml via makepri createconfig (matches local build.ps1 behavior)
           $priconfigPath = Join-Path $stagingDir "priconfig.xml"
-          @"
-          <?xml version="1.0" encoding="utf-8"?>
-          <resources targetOsVersion="10.0.0" majorVersion="1">
-            <index root="$stagingDir" startIndexAt="$stagingDir">
-              <default>
-                <qualifier name="Language" value="en-US" />
-                <qualifier name="Contrast" value="standard" />
-                <qualifier name="Scale" value="200" />
-                <qualifier name="HomeRegion" value="001" />
-                <qualifier name="TargetSize" value="256" />
-                <qualifier name="LayoutDirection" value="LTR" />
-                <qualifier name="DXFeatureLevel" value="DX9" />
-                <qualifier name="Configuration" value="" />
-                <qualifier name="AlternateForm" value="" />
-                <qualifier name="Platform" value="UAP" />
-              </default>
-              <indexer-config type="folder" foldernameAsQualifier="true" filenameAsQualifier="true" />
-              <indexer-config type="PRI" />
-            </index>
-          </resources>
-          "@ | Set-Content $priconfigPath -Encoding UTF8
+          & $makepri createconfig /cf $priconfigPath /dq "en-US" /pv "10.0.0" /o 2>&1 | Out-Null
 
-          # Run makepri
+          # Build the merged resources.pri
           $priOutput = Join-Path $outputDir "resources.pri"
-          & $makepri.FullName new /pr $stagingDir /cf $priconfigPath /of $priOutput /o 2>&1
+          $result = & $makepri new /pr $stagingDir /cf $priconfigPath /in "BootstrapMate" /of $priOutput /o 2>&1
           if ($LASTEXITCODE -ne 0) {
-            Write-Host "::error::makepri.exe failed with exit code $LASTEXITCODE"
+            Write-Host "::error::makepri.exe failed (exit $LASTEXITCODE): $result"
             exit 1
           }
 
           $sizeKB = [math]::Round((Get-Item $priOutput).Length / 1KB)
           Write-Host "Generated resources.pri ($sizeKB KB)"
+          Remove-Item $stagingDir -Recurse -Force -ErrorAction SilentlyContinue
 
       # ── Code Signing ──────────────────────────────────────────
       # Signing CI sampletes are included but commented out since org doesn't currently have a code signing certificate. 
