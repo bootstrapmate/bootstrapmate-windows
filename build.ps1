@@ -391,10 +391,49 @@ function Get-BestCertificate {
         Write-Log "No certificate found matching BOOTSTRAPMATE_CERT_SUBJECT='$Global:EnterpriseCertSubject'" "WARN"
     }
 
-    # Priority 3: No env vars set — scan for any valid code-signing certificate
+    # Priority 3: No env vars set — prefer LocalMachine (enterprise-deployed) certs; exclude test certs
     $allCerts = Find-CodeSigningCerts
+    $cert = $null
+
+    # 3a: LocalMachine, non-test, has Code Signing EKU
     if ($allCerts) {
+        $cert = $allCerts | Where-Object { $_.Store -eq "LocalMachine" -and $_.Subject -notmatch "\bTest\b" } | Select-Object -First 1
+    }
+
+    # 3b: Enterprise cert with no EKU — Intune/MDM-issued certs frequently omit EKU
+    #     but are accepted by signtool when selected by thumbprint.
+    #     Search LocalMachine first (GPO/MDM machine certs), then CurrentUser (user-enrolled certs).
+    if (-not $cert) {
+        $enterpriseKeywords = @("Enterprise", "Intune", "Corporate", "Organization")
+        $storeMap = [ordered]@{
+            "LocalMachine" = "Cert:\LocalMachine\My"
+            "CurrentUser"  = "Cert:\CurrentUser\My"
+        }
+        :outerLoop foreach ($storeName in $storeMap.Keys) {
+            foreach ($kw in $enterpriseKeywords) {
+                $found = Get-ChildItem $storeMap[$storeName] -ErrorAction SilentlyContinue |
+                    Where-Object { $_.HasPrivateKey -and $_.NotAfter -gt (Get-Date) -and $_.Subject -like "*$kw*" -and $_.Subject -notmatch "\bTest\b" } |
+                    Sort-Object NotAfter -Descending | Select-Object -First 1
+                if ($found) {
+                    $cert = $found | Add-Member -NotePropertyName Store -NotePropertyValue $storeName -PassThru -Force
+                    break outerLoop
+                }
+            }
+        }
+    }
+
+    # 3c: Any store, non-test, has Code Signing EKU
+    if (-not $cert -and $allCerts) {
+        $cert = $allCerts | Where-Object { $_.Subject -notmatch "\bTest\b" } | Select-Object -First 1
+    }
+
+    # 3d: Last resort — use whatever is available (test/dev certs)
+    if (-not $cert -and $allCerts) {
         $cert = $allCerts | Select-Object -First 1
+        Write-Log "Only test/development certificates found — not suitable for production deployment" "WARN"
+    }
+
+    if ($cert) {
         Write-Log "Auto-detected code signing certificate (store scan): $($cert.Subject)" "SUCCESS"
         return $cert
     }
