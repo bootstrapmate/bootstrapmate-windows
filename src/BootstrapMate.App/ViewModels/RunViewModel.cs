@@ -28,6 +28,9 @@ public partial class RunViewModel : ObservableObject
     [ObservableProperty] private bool _isRunning;
     [ObservableProperty] private int? _lastExitCode;
     [ObservableProperty] private bool _showDebug;
+    [ObservableProperty] private int _stepCount;
+    [ObservableProperty] private string _currentItemName = string.Empty;
+    [ObservableProperty] private int _errorCount;
 
     public ObservableCollection<OutputLine> OutputLines { get; } = [];
 
@@ -49,6 +52,9 @@ public partial class RunViewModel : ObservableObject
 
         IsRunning = true;
         LastExitCode = null;
+        StepCount = 0;
+        ErrorCount = 0;
+        CurrentItemName = string.Empty;
         OutputLines.Clear();
         OnPropertyChanged(nameof(FilteredLines));
 
@@ -235,6 +241,19 @@ public partial class RunViewModel : ObservableObject
         {
             OutputLines.Add(new OutputLine(text, level));
             OnPropertyChanged(nameof(FilteredLines));
+
+            // Track progress from [PROGRESS] lines
+            if (text.Contains("[PROGRESS]"))
+            {
+                StepCount++;
+                var idx = text.IndexOf("[PROGRESS]", StringComparison.Ordinal) + "[PROGRESS]".Length;
+                var detail = text[idx..].TrimStart(':', ' ');
+                if (!string.IsNullOrWhiteSpace(detail))
+                    CurrentItemName = detail;
+            }
+
+            if (level == LogLevel.Error)
+                ErrorCount++;
         });
     }
 

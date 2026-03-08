@@ -56,9 +56,14 @@ public sealed partial class RunPage : Page
                 break;
             case nameof(RunViewModel.LastExitCode):
                 UpdateStatusIndicator();
+                UpdateResultBanner();
                 break;
             case nameof(RunViewModel.FilteredLines):
                 UpdateConsoleItems();
+                break;
+            case nameof(RunViewModel.StepCount):
+            case nameof(RunViewModel.CurrentItemName):
+                UpdateStepInfo();
                 break;
         }
     }
@@ -73,6 +78,11 @@ public sealed partial class RunPage : Page
             RunningProgress.IsActive = true;
             RunningLabel.Visibility = Visibility.Visible;
             ClearButton.Visibility = Visibility.Collapsed;
+            ProgressPanel.Visibility = Visibility.Visible;
+            StepProgress.IsIndeterminate = true;
+            StepItemLabel.Text = "Initializing...";
+            StepCountLabel.Text = "";
+            ResultBanner.IsOpen = false;
         }
         else
         {
@@ -82,6 +92,7 @@ public sealed partial class RunPage : Page
             RunningProgress.IsActive = false;
             RunningLabel.Visibility = Visibility.Collapsed;
             ClearButton.Visibility = _vm.OutputLines.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+            ProgressPanel.Visibility = Visibility.Collapsed;
         }
     }
 
@@ -131,6 +142,39 @@ public sealed partial class RunPage : Page
     }
 
     // ── Helpers ────────────────────────────────────────────────────
+
+    private void UpdateStepInfo()
+    {
+        if (!string.IsNullOrEmpty(_vm.CurrentItemName))
+            StepItemLabel.Text = _vm.CurrentItemName;
+        if (_vm.StepCount > 0)
+            StepCountLabel.Text = $"Step {_vm.StepCount}";
+    }
+
+    private void UpdateResultBanner()
+    {
+        if (_vm.LastExitCode is null)
+        {
+            ResultBanner.IsOpen = false;
+            return;
+        }
+
+        ResultBanner.IsOpen = true;
+        if (_vm.LastExitCode == 0)
+        {
+            ResultBanner.Severity = InfoBarSeverity.Success;
+            ResultBanner.Title = "Completed successfully";
+            ResultBanner.Message = $"{_vm.StepCount} items processed";
+        }
+        else
+        {
+            ResultBanner.Severity = InfoBarSeverity.Error;
+            ResultBanner.Title = $"Failed with exit code {_vm.LastExitCode}";
+            ResultBanner.Message = _vm.ErrorCount > 0
+                ? $"{_vm.ErrorCount} error{(_vm.ErrorCount == 1 ? "" : "s")} encountered during {_vm.StepCount} items"
+                : "Check the console output for details";
+        }
+    }
 
     private static SolidColorBrush BrushForLevel(RunViewModel.LogLevel level) => level switch
     {
