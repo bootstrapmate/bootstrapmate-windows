@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Text;
@@ -93,33 +94,37 @@ namespace BootstrapMate
             // Clear command file
             ClearCommandFile();
 
-            // Build dialog arguments
-            var arguments = new StringBuilder();
-            arguments.Append($"--title \"{title}\" ");
-            arguments.Append($"--message \"{message}\" ");
-            arguments.Append("--progressbar ");
-            arguments.Append("--progress 0 ");
-            arguments.Append("--progresstext \"Preparing...\" ");
-            arguments.Append($"--commandfile \"{_commandFilePath}\" ");
-            arguments.Append("--button1text \"Please Wait\" ");
+            // Build dialog arguments as a safe list (avoids quoting/escaping issues)
+            var argList = new List<string>
+            {
+                "--title",        title,
+                "--message",      message,
+                "--progress",     "0",
+                "--progresstext", "Preparing...",
+                "--commandfile",  _commandFilePath,
+                "--button1",      "Please Wait",
+            };
 
             if (!string.IsNullOrEmpty(icon))
             {
-                arguments.Append($"--icon \"{icon}\" ");
+                argList.Add("--icon");
+                argList.Add(icon);
             }
 
             if (fullScreen)
             {
-                arguments.Append("--fullscreen ");
+                argList.Add("--fullscreen");
             }
 
             if (kioskMode)
             {
-                arguments.Append("--kiosk ");
+                argList.Add("--kiosk");
             }
 
+            Logger.Info($"Dialog args: {string.Join(" ", argList)}");
+
             // Launch dialog process
-            LaunchDialog(arguments.ToString().Trim());
+            LaunchDialog(argList);
         }
 
         /// <summary>
@@ -290,7 +295,7 @@ namespace BootstrapMate
 
         #region Private Methods
 
-        private void LaunchDialog(string arguments)
+        private void LaunchDialog(List<string> argList)
         {
             if (_isRunning)
             {
@@ -300,18 +305,20 @@ namespace BootstrapMate
 
             try
             {
+                // UseShellExecute=true launches dialog.exe via the shell at the interactive
+                // user's token level (not elevated), which is required for WPF transparency/
+                // fullscreen compositing to work correctly when this process runs elevated.
+                // Requires Arguments string (ArgumentList is only available with UseShellExecute=false).
                 var startInfo = new ProcessStartInfo
                 {
-                    FileName = _dialogPath,
-                    Arguments = arguments,
-                    UseShellExecute = false,
-                    CreateNoWindow = false,
-                    RedirectStandardOutput = false,
-                    RedirectStandardError = false
+                    FileName        = _dialogPath,
+                    Arguments       = BuildArgumentString(argList),
+                    UseShellExecute = true,
+                    CreateNoWindow  = false,
                 };
 
                 _dialogProcess = Process.Start(startInfo);
-                
+
                 if (_dialogProcess != null)
                 {
                     _isRunning = true;
@@ -327,6 +334,42 @@ namespace BootstrapMate
                 Logger.Error($"Failed to launch csharpdialog: {ex.Message}");
                 _isRunning = false;
             }
+        }
+
+        /// <summary>
+        /// Converts a list of arguments to a properly quoted Windows command-line string.
+        /// Each argument containing spaces or quotes is wrapped in double-quotes with
+        /// internal quotes escaped per Windows command-line conventions.
+        /// </summary>
+        private static string BuildArgumentString(List<string> args)
+        {
+            var parts = new System.Text.StringBuilder();
+            foreach (var arg in args)
+            {
+                if (parts.Length > 0)
+                    parts.Append(' ');
+
+                bool needsQuotes = arg.Contains(' ') || arg.Contains('"') || arg.Length == 0;
+                if (needsQuotes)
+                {
+                    parts.Append('"');
+                    // Escape backslashes and quotes per Windows rules
+                    int backslashes = 0;
+                    foreach (char c in arg)
+                    {
+                        if (c == '\\') { backslashes++; }
+                        else if (c == '"') { parts.Append('\\', backslashes + 1); parts.Append('"'); backslashes = 0; }
+                        else { parts.Append('\\', backslashes); parts.Append(c); backslashes = 0; }
+                    }
+                    parts.Append('\\', backslashes);
+                    parts.Append('"');
+                }
+                else
+                {
+                    parts.Append(arg);
+                }
+            }
+            return parts.ToString();
         }
 
         private void WriteCommand(string command)

@@ -18,11 +18,20 @@ public sealed partial class MainWindow : Window
 
         Title = "BootstrapMate";
 
-        // DPI-aware sizing: ensure 1100x750 logical pixels regardless of display scaling
+        // DPI-aware sizing clamped to available screen work area
         var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
         var dpi = GetDpiForWindow(hwnd);
         var scale = dpi / 96.0;
-        AppWindow.Resize(new Windows.Graphics.SizeInt32((int)(1200 * scale), (int)(820 * scale)));
+        var displayArea = Microsoft.UI.Windowing.DisplayArea.GetFromWindowId(
+            AppWindow.Id, Microsoft.UI.Windowing.DisplayAreaFallback.Nearest);
+        var workArea = displayArea.WorkArea;
+        int targetW = (int)(1280 * scale);
+        int targetH = (int)(1060 * scale);
+        int maxW = (int)(workArea.Width * 0.96);
+        int maxH = (int)(workArea.Height * 0.96);
+        AppWindow.Resize(new Windows.Graphics.SizeInt32(
+            Math.Min(targetW, maxW),
+            Math.Min(targetH, maxH)));
 
         // Set the window icon from embedded asset
         AppWindow.SetIcon(System.IO.Path.Combine(
