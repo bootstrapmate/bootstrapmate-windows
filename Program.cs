@@ -642,11 +642,11 @@ namespace BootstrapMate
                 using var httpClient = new HttpClient();
                 httpClient.DefaultRequestHeaders.Add("User-Agent", $"BootstrapMate/{Version}");
                 
-                string jsonContent = await httpClient.GetStringAsync(manifestUrl);
+                string manifestContent = await httpClient.GetStringAsync(manifestUrl);
                 Logger.Debug("Manifest downloaded successfully");
                 
-                // Parse the JSON manifest
-                using var doc = JsonDocument.Parse(jsonContent);
+                // Parse manifest (auto-detects JSON or YAML)
+                using var doc = ManifestParser.Parse(manifestContent, manifestUrl);
                 var root = doc.RootElement;
                 
                 // Count total packages for dialog progress
