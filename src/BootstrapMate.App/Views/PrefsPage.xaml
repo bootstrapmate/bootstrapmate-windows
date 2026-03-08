@@ -15,7 +15,7 @@
 
             <!-- ═══ App Info Header ═══ -->
             <StackPanel HorizontalAlignment="Center" Spacing="8" Margin="0,8,0,0">
-                <FontIcon Glyph="&#xE74C;" FontSize="48" HorizontalAlignment="Center" />
+                <Image x:Name="AppIcon" Width="64" Height="64" HorizontalAlignment="Center" />
 
                 <TextBlock Text="BootstrapMate"
                            Style="{StaticResource TitleTextBlockStyle}"
