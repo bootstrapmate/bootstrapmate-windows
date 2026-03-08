@@ -1,0 +1,226 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  BootstrapMate ADMX Policy Template
+  
+  Deploy via Intune: Devices > Configuration > Import ADMX
+  Or place in C:\Windows\PolicyDefinitions\ for local Group Policy.
+  
+  Registry target: HKLM\SOFTWARE\Policies\BootstrapMate
+  
+  Intune OMA-URI (manual, if not using ADMX ingestion):
+    ./Device/Vendor/MSFT/Policy/Config/BootstrapMate~Policy~BootstrapMate/{ValueName}
+-->
+<policyDefinitions xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   revision="1.0"
+                   schemaVersion="1.0"
+                   xmlns="http://schemas.microsoft.com/GroupPolicy/2006/07/PolicyDefinitions">
+
+  <policyNamespaces>
+    <target prefix="BootstrapMate" namespace="BootstrapMate.Policies" />
+  </policyNamespaces>
+
+  <resources minRequiredRevision="1.0" />
+
+  <categories>
+    <category name="BootstrapMate" displayName="$(string.Cat_BootstrapMate)" />
+    <category name="Connection" displayName="$(string.Cat_Connection)">
+      <parentCategory ref="BootstrapMate" />
+    </category>
+    <category name="Behavior" displayName="$(string.Cat_Behavior)">
+      <parentCategory ref="BootstrapMate" />
+    </category>
+    <category name="Dialog" displayName="$(string.Cat_Dialog)">
+      <parentCategory ref="BootstrapMate" />
+    </category>
+    <category name="Advanced" displayName="$(string.Cat_Advanced)">
+      <parentCategory ref="BootstrapMate" />
+    </category>
+  </categories>
+
+  <policies>
+    <!-- ═══ Connection ═══ -->
+
+    <policy name="ManifestUrl"
+            class="Machine"
+            displayName="$(string.ManifestUrl)"
+            explainText="$(string.ManifestUrl_Help)"
+            key="SOFTWARE\Policies\BootstrapMate"
+            presentation="$(presentation.ManifestUrl)">
+      <parentCategory ref="Connection" />
+      <supportedOn ref="windows:SUPPORTED_Windows_10_0" />
+      <elements>
+        <text id="ManifestUrl_Value" valueName="ManifestUrl" required="true" />
+      </elements>
+    </policy>
+
+    <policy name="AuthorizationHeader"
+            class="Machine"
+            displayName="$(string.AuthorizationHeader)"
+            explainText="$(string.AuthorizationHeader_Help)"
+            key="SOFTWARE\Policies\BootstrapMate"
+            presentation="$(presentation.AuthorizationHeader)">
+      <parentCategory ref="Connection" />
+      <supportedOn ref="windows:SUPPORTED_Windows_10_0" />
+      <elements>
+        <text id="AuthorizationHeader_Value" valueName="AuthorizationHeader" />
+      </elements>
+    </policy>
+
+    <policy name="FollowRedirects"
+            class="Machine"
+            displayName="$(string.FollowRedirects)"
+            explainText="$(string.FollowRedirects_Help)"
+            key="SOFTWARE\Policies\BootstrapMate"
+            valueName="FollowRedirects">
+      <parentCategory ref="Connection" />
+      <supportedOn ref="windows:SUPPORTED_Windows_10_0" />
+      <enabledValue><decimal value="1" /></enabledValue>
+      <disabledValue><decimal value="0" /></disabledValue>
+    </policy>
+
+    <!-- ═══ Behavior ═══ -->
+
+    <policy name="Reboot"
+            class="Machine"
+            displayName="$(string.Reboot)"
+            explainText="$(string.Reboot_Help)"
+            key="SOFTWARE\Policies\BootstrapMate"
+            valueName="Reboot">
+      <parentCategory ref="Behavior" />
+      <supportedOn ref="windows:SUPPORTED_Windows_10_0" />
+      <enabledValue><decimal value="1" /></enabledValue>
+      <disabledValue><decimal value="0" /></disabledValue>
+    </policy>
+
+    <policy name="SilentMode"
+            class="Machine"
+            displayName="$(string.SilentMode)"
+            explainText="$(string.SilentMode_Help)"
+            key="SOFTWARE\Policies\BootstrapMate"
+            valueName="SilentMode">
+      <parentCategory ref="Behavior" />
+      <supportedOn ref="windows:SUPPORTED_Windows_10_0" />
+      <enabledValue><decimal value="1" /></enabledValue>
+      <disabledValue><decimal value="0" /></disabledValue>
+    </policy>
+
+    <policy name="VerboseMode"
+            class="Machine"
+            displayName="$(string.VerboseMode)"
+            explainText="$(string.VerboseMode_Help)"
+            key="SOFTWARE\Policies\BootstrapMate"
+            valueName="VerboseMode">
+      <parentCategory ref="Behavior" />
+      <supportedOn ref="windows:SUPPORTED_Windows_10_0" />
+      <enabledValue><decimal value="1" /></enabledValue>
+      <disabledValue><decimal value="0" /></disabledValue>
+    </policy>
+
+    <policy name="DryRun"
+            class="Machine"
+            displayName="$(string.DryRun)"
+            explainText="$(string.DryRun_Help)"
+            key="SOFTWARE\Policies\BootstrapMate"
+            valueName="DryRun">
+      <parentCategory ref="Behavior" />
+      <supportedOn ref="windows:SUPPORTED_Windows_10_0" />
+      <enabledValue><decimal value="1" /></enabledValue>
+      <disabledValue><decimal value="0" /></disabledValue>
+    </policy>
+
+    <!-- ═══ Dialog ═══ -->
+
+    <policy name="EnableDialog"
+            class="Machine"
+            displayName="$(string.EnableDialog)"
+            explainText="$(string.EnableDialog_Help)"
+            key="SOFTWARE\Policies\BootstrapMate"
+            valueName="EnableDialog">
+      <parentCategory ref="Dialog" />
+      <supportedOn ref="windows:SUPPORTED_Windows_10_0" />
+      <enabledValue><decimal value="1" /></enabledValue>
+      <disabledValue><decimal value="0" /></disabledValue>
+    </policy>
+
+    <policy name="DialogTitle"
+            class="Machine"
+            displayName="$(string.DialogTitle)"
+            explainText="$(string.DialogTitle_Help)"
+            key="SOFTWARE\Policies\BootstrapMate"
+            presentation="$(presentation.DialogTitle)">
+      <parentCategory ref="Dialog" />
+      <supportedOn ref="windows:SUPPORTED_Windows_10_0" />
+      <elements>
+        <text id="DialogTitle_Value" valueName="DialogTitle" />
+      </elements>
+    </policy>
+
+    <policy name="DialogMessage"
+            class="Machine"
+            displayName="$(string.DialogMessage)"
+            explainText="$(string.DialogMessage_Help)"
+            key="SOFTWARE\Policies\BootstrapMate"
+            presentation="$(presentation.DialogMessage)">
+      <parentCategory ref="Dialog" />
+      <supportedOn ref="windows:SUPPORTED_Windows_10_0" />
+      <elements>
+        <text id="DialogMessage_Value" valueName="DialogMessage" />
+      </elements>
+    </policy>
+
+    <policy name="DialogIcon"
+            class="Machine"
+            displayName="$(string.DialogIcon)"
+            explainText="$(string.DialogIcon_Help)"
+            key="SOFTWARE\Policies\BootstrapMate"
+            presentation="$(presentation.DialogIcon)">
+      <parentCategory ref="Dialog" />
+      <supportedOn ref="windows:SUPPORTED_Windows_10_0" />
+      <elements>
+        <text id="DialogIcon_Value" valueName="DialogIcon" />
+      </elements>
+    </policy>
+
+    <policy name="BlurScreen"
+            class="Machine"
+            displayName="$(string.BlurScreen)"
+            explainText="$(string.BlurScreen_Help)"
+            key="SOFTWARE\Policies\BootstrapMate"
+            valueName="BlurScreen">
+      <parentCategory ref="Dialog" />
+      <supportedOn ref="windows:SUPPORTED_Windows_10_0" />
+      <enabledValue><decimal value="1" /></enabledValue>
+      <disabledValue><decimal value="0" /></disabledValue>
+    </policy>
+
+    <!-- ═══ Advanced ═══ -->
+
+    <policy name="CustomInstallPath"
+            class="Machine"
+            displayName="$(string.CustomInstallPath)"
+            explainText="$(string.CustomInstallPath_Help)"
+            key="SOFTWARE\Policies\BootstrapMate"
+            presentation="$(presentation.CustomInstallPath)">
+      <parentCategory ref="Advanced" />
+      <supportedOn ref="windows:SUPPORTED_Windows_10_0" />
+      <elements>
+        <text id="CustomInstallPath_Value" valueName="CustomInstallPath" />
+      </elements>
+    </policy>
+
+    <policy name="NetworkTimeout"
+            class="Machine"
+            displayName="$(string.NetworkTimeout)"
+            explainText="$(string.NetworkTimeout_Help)"
+            key="SOFTWARE\Policies\BootstrapMate"
+            presentation="$(presentation.NetworkTimeout)">
+      <parentCategory ref="Advanced" />
+      <supportedOn ref="windows:SUPPORTED_Windows_10_0" />
+      <elements>
+        <decimal id="NetworkTimeout_Value" valueName="NetworkTimeout" minValue="10" maxValue="600" />
+      </elements>
+    </policy>
+
+  </policies>
+</policyDefinitions>

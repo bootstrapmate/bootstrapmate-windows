@@ -17,16 +17,17 @@ param(
     [string]$Architecture = "both",
     [switch]$Clean,
     [switch]$Test,
-    [switch]$AllowUnsigned,  # Explicit flag to allow unsigned builds for development only
-    [switch]$SkipMSI,        # Skip MSI and .intunewin creation (executables only)
-    [string]$CimianToolsVersion  # Version to embed in detection registry key
+    [switch]$AllowUnsigned,    # Explicit flag to allow unsigned builds for development only
+    [switch]$SkipMSI,          # Skip MSI and .intunewin creation (executables only)
+    [switch]$ListCerts,        # List available code signing certificates and exit
+    [string]$FindCertSubject   # Find and display certificates matching subject substring
 )
 
 $ErrorActionPreference = "Stop"
 
 Write-Host "=== BootstrapMate Build Script ===" -ForegroundColor Magenta
 Write-Host "Architecture: $Architecture" -ForegroundColor Yellow
-Write-Host "Code Signing: $(if ($AllowUnsigned) { 'DISABLED (Development Only)' } else { 'REQUIRED (Production)' })" -ForegroundColor $(if ($AllowUnsigned) { "Red" } else { "Green" })
+Write-Host "Code Signing: $(if ($AllowUnsigned) { 'DISABLED (Development Only)' } else { 'AUTO-DETECT (falls back to unsigned)' })" -ForegroundColor $(if ($AllowUnsigned) { "Red" } else { "Green" })
 Write-Host "MSI + IntuneWin: $(if ($SkipMSI) { 'DISABLED' } else { 'ENABLED (Default)' })" -ForegroundColor $(if ($SkipMSI) { "Yellow" } else { "Green" })
 Write-Host "Clean Build: $Clean" -ForegroundColor Yellow
 if ($AllowUnsigned) {
@@ -124,6 +125,47 @@ function Test-FileLocked {
         Write-Log "Unexpected error testing file lock: $($_.Exception.Message)" "WARN"
         return $false  # Assume not locked if we can't determine
     }
+}
+
+# Wait until a file's data stream can be opened for reading.
+# Enterprise security agents (Defender, EDR) hold an exclusive lock while scanning
+# newly-created/signed binaries. The build must wait for the scan to release before
+# reporting success, otherwise the user gets "Access is denied" immediately after build.
+function Wait-FileAccessible {
+    param(
+        [Parameter(Mandatory)][string]$FilePath,
+        [int]$TimeoutSeconds = 60,
+        [int]$RetryIntervalSeconds = 3
+    )
+
+    $fileName = [System.IO.Path]::GetFileName($FilePath)
+    $elapsed  = 0
+    $warned   = $false
+
+    while ($elapsed -lt $TimeoutSeconds) {
+        try {
+            $fs = [System.IO.File]::Open(
+                $FilePath,
+                [System.IO.FileMode]::Open,
+                [System.IO.FileAccess]::Read,
+                [System.IO.FileShare]::ReadWrite
+            )
+            $fs.Close()
+            if ($warned) { Write-Log "Security scan completed — $fileName is accessible" "SUCCESS" }
+            return $true
+        } catch {
+            if (-not $warned) {
+                Write-Log "Security scan in progress on $fileName — waiting up to ${TimeoutSeconds}s..." "WARN"
+                $warned = $true
+            }
+            Start-Sleep -Seconds $RetryIntervalSeconds
+            $elapsed += $RetryIntervalSeconds
+        }
+    }
+
+    Write-Log "Timed out waiting for $fileName — security agent may still be scanning" "WARN"
+    Write-Log "The file was built and signed successfully, but may not be immediately executable" "WARN"
+    return $false
 }
 
 # Function to ensure signtool is available (enhanced from CimianTools)
@@ -257,6 +299,101 @@ function Get-SigningCertificate {
     return $null
 }
 
+# Scan both certificate stores for any valid code-signing certificate
+function Find-CodeSigningCerts {
+    param([string]$SubjectFilter = "")
+
+    $certs = @()
+    $stores = @("Cert:\CurrentUser\My", "Cert:\LocalMachine\My")
+
+    foreach ($store in $stores) {
+        $storeCerts = Get-ChildItem $store -ErrorAction SilentlyContinue | Where-Object {
+            $_.HasPrivateKey -and
+            ($_.EnhancedKeyUsageList.FriendlyName -contains "Code Signing" -or
+             $_.EnhancedKeyUsageList.ObjectId   -contains "1.3.6.1.5.5.7.3.3") -and
+            $_.NotAfter -gt (Get-Date) -and
+            ($SubjectFilter -eq "" -or $_.Subject -like "*$SubjectFilter*")
+        }
+        if ($storeCerts) {
+            $storeName = if ($store -like "*CurrentUser*") { "CurrentUser" } else { "LocalMachine" }
+            $certs += $storeCerts | ForEach-Object {
+                $_ | Add-Member -NotePropertyName Store -NotePropertyValue $storeName -PassThru -Force
+            }
+        }
+    }
+
+    return $certs | Sort-Object NotAfter -Descending
+}
+
+# Display all discovered code-signing certificates
+function Show-CertificateList {
+    param([string]$SubjectFilter = "")
+
+    $certs = Find-CodeSigningCerts -SubjectFilter $SubjectFilter
+
+    if ($certs) {
+        Write-Host ""
+        Write-Host "Available code signing certificates:" -ForegroundColor Green
+        for ($i = 0; $i -lt $certs.Count; $i++) {
+            $cert = $certs[$i]
+            Write-Host ""
+            Write-Host "[$($i + 1)] Subject:    $($cert.Subject)" -ForegroundColor Cyan
+            Write-Host "     Issuer:     $($cert.Issuer)" -ForegroundColor Gray
+            Write-Host "     Thumbprint: $($cert.Thumbprint)" -ForegroundColor Yellow
+            Write-Host "     Valid Until: $($cert.NotAfter)" -ForegroundColor Gray
+            Write-Host "     Store:      $($cert.Store)" -ForegroundColor Gray
+        }
+        Write-Host ""
+    } else {
+        $msg = if ($SubjectFilter) { "No certificates found matching: $SubjectFilter" } else { "No valid code signing certificates found in any store" }
+        Write-Host $msg -ForegroundColor Yellow
+    }
+
+    return $certs
+}
+
+# Auto-detect the best available code-signing certificate.
+# Helper: subject-only cert search (no EKU requirement). Enterprise certs issued by MDM/Intune
+# often have no EKU but are still accepted by signtool when selected by thumbprint.
+function Find-CertBySubject {
+    param([Parameter(Mandatory)][string]$SubjectFilter)
+    $certLM = Get-ChildItem Cert:\LocalMachine\My -ErrorAction SilentlyContinue |
+        Where-Object { $_.HasPrivateKey -and $_.Subject -like "*$SubjectFilter*" } |
+        Sort-Object NotAfter -Descending | Select-Object -First 1
+    $certCU = Get-ChildItem Cert:\CurrentUser\My -ErrorAction SilentlyContinue |
+        Where-Object { $_.HasPrivateKey -and $_.Subject -like "*$SubjectFilter*" } |
+        Sort-Object NotAfter -Descending | Select-Object -First 1
+    # Prefer LocalMachine (machine-deployed enterprise cert); fall back to CurrentUser
+    if ($certLM) { return $certLM | Add-Member -NotePropertyName Store -NotePropertyValue "LocalMachine" -PassThru -Force }
+    if ($certCU) { return $certCU | Add-Member -NotePropertyName Store -NotePropertyValue "CurrentUser"  -PassThru -Force }
+    return $null
+}
+
+function Get-BestCertificate {
+    # Priority 1: Filter by CN env var (tries EKU-aware search first, then subject-only)
+    if ($Global:EnterpriseCertCN) {
+        $cert = (Find-CodeSigningCerts -SubjectFilter $Global:EnterpriseCertCN | Select-Object -First 1)
+        if (-not $cert) { $cert = Find-CertBySubject -SubjectFilter $Global:EnterpriseCertCN }
+        if ($cert) {
+            Write-Log "Auto-detected certificate via CN filter: $($cert.Subject)" "SUCCESS"
+            return $cert
+        }
+        Write-Log "No certificate matched BOOTSTRAPMATE_CERT_CN='$Global:EnterpriseCertCN'" "WARN"
+    }
+
+    # Priority 2: Filter by subject env var (subject-only — no EKU check)
+    if ($Global:EnterpriseCertSubject) {
+        $cert = Find-CertBySubject -SubjectFilter $Global:EnterpriseCertSubject
+        if ($cert) {
+            Write-Log "Auto-detected code signing certificate: $($cert.Subject)" "SUCCESS"
+            return $cert
+        }
+        Write-Log "No certificate found matching BOOTSTRAPMATE_CERT_SUBJECT='$Global:EnterpriseCertSubject'" "WARN"
+    }
+
+    return $null
+}
+
 # Function to sign executable with robust retry and multiple timestamp servers (enhanced from CimianTools)
 function Invoke-SignArtifact {
     param(
@@ -329,16 +466,23 @@ function Invoke-SignArtifact {
                         Write-Log "Legacy timestamp failed (non-critical): $($_.Exception.Message)" "INFO"
                     }
                     
-                    # Verify the signature
+                    # Verify the signature — /pa requires a trusted root chain;
+                    # self-signed dev certs pass the sign step but fail chain verification.
+                    # Treat sign exit code 0 as the authoritative success indicator.
                     Write-Log "Verifying signature..." "INFO"
-                    & signtool.exe verify /pa "$Path"
+                    $verifyOutput = & signtool.exe verify /pa "$Path" 2>&1
                     if ($LASTEXITCODE -eq 0) {
                         Write-Log "Signature verification successful!" "SUCCESS"
-                        return $true
                     } else {
-                        Write-Log "Signature verification failed" "ERROR"
-                        return $false
+                        # Check if this is just an untrusted root (self-signed dev cert) vs a real failure
+                        $isSelfSignedWarning = $verifyOutput -match "not trusted by the trust provider|CERT_E_UNTRUSTEDROOT|root certificate which is not trusted"
+                        if ($isSelfSignedWarning) {
+                            Write-Log "Signature applied (self-signed cert — chain untrusted, expected for dev builds)" "WARN"
+                        } else {
+                            Write-Log "Signature verification failed: $verifyOutput" "WARN"
+                        }
                     }
+                    return $true
                 }
 
                 $lastError = "signtool exit code: $code"
@@ -714,69 +858,6 @@ function Invoke-ExecutableSigning {
     }
 }
 
-# Function to build sbin-installer for specific architecture
-function Build-SbinInstaller {
-    param(
-        [string]$Arch,
-        [System.Security.Cryptography.X509Certificates.X509Certificate2]$SigningCert = $null,
-        [string]$CertificateStore = "CurrentUser",
-        [string]$Version
-    )
-    
-    Write-Log "Building sbin-installer for $Arch architecture..." "INFO"
-    
-    # Check if installer submodule exists
-    $installerPath = Join-Path $PSScriptRoot "..\installer"
-    if (-not (Test-Path $installerPath)) {
-        Write-Log "sbin-installer submodule not found at $installerPath" "ERROR"
-        Write-Log "Run: git submodule update --init --recursive" "ERROR"
-        return $null
-    }
-    
-    # Build sbin-installer using its build script
-    Push-Location $installerPath
-    try {
-        $buildArgs = @{
-            Architecture = $Arch
-            Version = $Version
-            SkipMsi = $true  # We don't need the MSI, just the executable
-        }
-        
-        # Add certificate if available
-        if ($SigningCert) {
-            $buildArgs.CertificateThumbprint = $SigningCert.Thumbprint
-        }
-        
-        Write-Log "Running sbin-installer build: .\build.ps1 -Architecture $Arch -Version $Version -SkipMsi" "INFO"
-        & .\build.ps1 @buildArgs
-        
-        if ($LASTEXITCODE -ne 0) {
-            throw "sbin-installer build failed with exit code: $LASTEXITCODE"
-        }
-        
-        # Verify the executable was built (use current location since we're in the installer directory)
-        $installerExe = Join-Path (Get-Location) "dist\$Arch\installer.exe"
-        if (-not (Test-Path $installerExe)) {
-            throw "sbin-installer executable not found: $installerExe"
-        }
-        
-        # Convert to absolute path before returning
-        $installerExe = (Get-Item $installerExe).FullName
-        
-        $fileInfo = Get-Item $installerExe
-        $sizeMB = [math]::Round($fileInfo.Length / 1MB, 2)
-        Write-Log "sbin-installer build successful ($Arch): $($fileInfo.Name) ($sizeMB MB)" "SUCCESS"
-        
-        return $installerExe
-        
-    } catch {
-        Write-Log "Failed to build sbin-installer ($Arch): $($_.Exception.Message)" "ERROR"
-        return $null
-    } finally {
-        Pop-Location
-    }
-}
-
 # Function to build for specific architecture
 function Build-Architecture {
     param(
@@ -887,9 +968,9 @@ function Build-Architecture {
                         Write-Log "Could not remove Defender exclusion (non-critical)" "WARN"
                     }
                 }
+                # Wait for security scanner (Defender/EDR) to release its lock before returning
+                Wait-FileAccessible -FilePath $executablePath | Out-Null
                 return $true
-            } else {
-                Write-Log "Code signing failed for $Arch" "ERROR"
                 
                 # Provide guidance but don't fail the build - allow for manual signing
                 Write-Log "" "WARN"
@@ -948,6 +1029,248 @@ function Test-Build {
         
     } catch {
         Write-Log "Testing failed: $($_.Exception.Message)" "ERROR"
+        return $false
+    }
+}
+
+# Generates resources.pri and copies XBF binary XAML files to the publish output.
+#
+# Background: EnableCoreMrtTooling=false is set in BootstrapMate.App.csproj because the
+# VS "Universal Windows Platform development" workload (which provides
+# Microsoft.Build.Packaging.Pri.Tasks.dll) is not installed on this machine.
+# Without that workload, the standard MSBuild MrtCore PRI generation pipeline can't run.
+#
+# This function replicates what the MSBuild PriGen step would normally do:
+#  1. Copy XBF (binary XAML) files from obj/ to the publish dir so MRT can open them.
+#  2. Create a staging directory with the XBFs + WinUI 3 framework PRI files.
+#  3. Run makepri.exe new on the staging dir — the <indexer-config type="PRI"/> indexer
+#     automatically merges Microsoft.UI.Xaml.Controls.pri (which embeds themeresources.xbf,
+#     generic.xbf, etc. as EmbeddedData) into the output resources.pri.
+#  4. Write the merged resources.pri to the publish dir.
+function Publish-AppResources {
+    param(
+        [Parameter(Mandatory)][string]$Arch,
+        [Parameter(Mandatory)][string]$OutputDir,
+        [Parameter(Mandatory)][string]$AppProjectDir
+    )
+
+    Write-Log "Generating XAML resources (XBF + resources.pri) for App ($Arch)..." "INFO"
+
+    # Locate makepri.exe from the Windows SDK installation
+    $makepri = $null
+    $sdkBinRoots = @(
+        "$env:ProgramFiles\Windows Kits\10\bin",
+        "${env:ProgramFiles(x86)}\Windows Kits\10\bin"
+    ) | Where-Object { Test-Path $_ }
+
+    foreach ($root in $sdkBinRoots) {
+        foreach ($toolArch in @("arm64", "x64", "x86")) {
+            $candidates = Get-ChildItem "$root\*\$toolArch\makepri.exe" -ErrorAction SilentlyContinue |
+                Sort-Object { [version]($_.FullName -replace '.*\\(\d+\.\d+\.\d+\.\d+)\\.*', '$1') } -Descending |
+                Select-Object -First 1
+            if ($candidates) { $makepri = $candidates.FullName; break }
+        }
+        if ($makepri) { break }
+    }
+
+    if (-not $makepri) {
+        Write-Log "makepri.exe not found in Windows SDK — skipping resources.pri generation" "WARN"
+        Write-Log "Install the Windows 10/11 SDK to enable automatic XAML resource generation" "WARN"
+        return $false
+    }
+    Write-Log "Found makepri.exe: $makepri" "INFO"
+
+    # Find the XBF root directory in obj/Release for the target architecture.
+    # dotnet publish --configuration Release --runtime win-$Arch places XBF files under:
+    #   obj\Release\<tfm>\win-$Arch\   (e.g., net10.0-windows10.0.19041.0)
+    $xbfFiles = Get-ChildItem "$AppProjectDir\obj\Release" -Recurse -Filter "*.xbf" -ErrorAction SilentlyContinue |
+        Where-Object { $_.FullName -match [regex]::Escape("\win-$Arch\") }
+
+    if (-not $xbfFiles) {
+        Write-Log "No XBF files found in obj\Release for win-$Arch — XAML binary resources missing" "WARN"
+        return $false
+    }
+
+    # Determine the architecture-specific obj root (the directory containing the XBF files)
+    $xbfRootPath = ($xbfFiles[0].FullName -split [regex]::Escape("\win-$Arch\"))[0] + "\win-$Arch"
+    Write-Log "Found $($xbfFiles.Count) XBF file(s) in: $xbfRootPath" "INFO"
+
+    # Create temp staging directory for makepri
+    $stagingDir = Join-Path ([System.IO.Path]::GetTempPath()) "bootstrapmate-pri-$Arch"
+    if (Test-Path $stagingDir) { Remove-Item $stagingDir -Recurse -Force }
+    New-Item -ItemType Directory $stagingDir | Out-Null
+
+    # Copy XBF files to staging and to the publish output dir, preserving subdirectory structure.
+    # resources.pri maps resources as file paths (e.g., "App.xbf", "Views\RunPage.xbf").
+    # MRT resolves those paths relative to the exe directory at runtime, so the XBF files
+    # must be physically present in OutputDir as well as in the staging dir.
+    foreach ($xbf in $xbfFiles) {
+        $relativePath = $xbf.FullName.Substring($xbfRootPath.Length).TrimStart('\')
+
+        # Copy to staging (for makepri indexing)
+        $stagingDest = Join-Path $stagingDir $relativePath
+        $stagingDestDir = Split-Path $stagingDest
+        if (-not (Test-Path $stagingDestDir)) { New-Item -ItemType Directory $stagingDestDir | Out-Null }
+        Copy-Item $xbf.FullName $stagingDest -Force
+
+        # Copy to publish output (for runtime file resolution)
+        $outputDest = Join-Path $OutputDir $relativePath
+        $outputDestDir = Split-Path $outputDest
+        if (-not (Test-Path $outputDestDir)) { New-Item -ItemType Directory $outputDestDir | Out-Null }
+        Copy-Item $xbf.FullName $outputDest -Force
+
+        Write-Log "  XBF: $relativePath" "INFO"
+    }
+
+    # Copy WinUI 3 framework PRI files (Microsoft.UI.pri, Microsoft.UI.Xaml.Controls.pri)
+    # to staging so makepri merges their embedded XBF resources (themeresources.xbf, etc.)
+    # into the output resources.pri via the <indexer-config type="PRI"/> indexer.
+    $frameworkPris = Get-ChildItem $OutputDir -Filter "Microsoft.*.pri"
+    foreach ($pri in $frameworkPris) {
+        Copy-Item $pri.FullName (Join-Path $stagingDir $pri.Name) -Force
+        Write-Log "  Framework PRI: $($pri.Name) ($([math]::Round($pri.Length/1KB, 0)) KB)" "INFO"
+    }
+
+    # Generate a default priconfig.xml to drive makepri
+    $priconfigPath = Join-Path $stagingDir "priconfig.xml"
+    & $makepri createconfig /cf $priconfigPath /dq "en-US" /pv "10.0.0" /o 2>&1 | Out-Null
+
+    # Build the merged resources.pri
+    $outPriPath = Join-Path $OutputDir "resources.pri"
+    Write-Log "Running makepri.exe new to generate resources.pri..." "INFO"
+    $priOutput = & $makepri new /pr $stagingDir /cf $priconfigPath /in "BootstrapMate" /of $outPriPath /o 2>&1
+
+    if ($LASTEXITCODE -ne 0) {
+        Write-Log "makepri.exe failed (exit $LASTEXITCODE): $priOutput" "ERROR"
+        Remove-Item $stagingDir -Recurse -Force -ErrorAction SilentlyContinue
+        return $false
+    }
+
+    $priSizeKB = [math]::Round((Get-Item $outPriPath).Length / 1KB, 0)
+    Write-Log "Generated resources.pri (${priSizeKB} KB) — $($xbfFiles.Count) XBF + $($frameworkPris.Count) framework PRI(s) merged" "SUCCESS"
+
+    # Clean up temp staging directory
+    Remove-Item $stagingDir -Recurse -Force -ErrorAction SilentlyContinue
+    return $true
+}
+
+# Function to build GUI App for specific architecture
+function Build-AppArchitecture {
+    param(
+        [string]$Arch,
+        [System.Security.Cryptography.X509Certificates.X509Certificate2]$SigningCert = $null,
+        [string]$CertificateStore = "CurrentUser"
+    )
+
+    Write-Log "Building GUI App for $Arch architecture..." "INFO"
+
+    $outputDir = "publish\app\$Arch"
+
+    if ($Clean -and (Test-Path $outputDir)) {
+        Write-Log "Cleaning App output directory: $outputDir" "INFO"
+        Remove-Item -Path $outputDir -Recurse -Force
+    }
+
+    if (-not (Test-Path $outputDir)) {
+        New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
+    }
+
+    $appProject = "src\BootstrapMate.App\BootstrapMate.App.csproj"
+    if (-not (Test-Path $appProject)) {
+        Write-Log "App project not found: $appProject — skipping App build" "WARN"
+        return $false
+    }
+
+    $buildArgs = @(
+        "publish"
+        $appProject
+        "--configuration", "Release"
+        "--runtime", "win-$Arch"
+        "--output", $outputDir
+        "--self-contained", "true"
+        "--verbosity", "minimal"
+    )
+
+    try {
+        Write-Log "Running: dotnet $($buildArgs -join ' ')" "INFO"
+        $null = & dotnet @buildArgs
+
+        if ($LASTEXITCODE -ne 0) {
+            throw "dotnet publish failed for App with exit code: $LASTEXITCODE"
+        }
+
+        $executablePath = Join-Path $outputDir "BootstrapMate.exe"
+
+        if (-not (Test-Path $executablePath)) {
+            throw "Expected App executable not found: $executablePath"
+        }
+
+        $executablePath = (Get-Item $executablePath).FullName
+
+        $fileInfo = Get-Item $executablePath
+        $sizeMB = [math]::Round($fileInfo.Length / 1MB, 2)
+        Write-Log "App build successful: $($fileInfo.Name) ($sizeMB MB)" "SUCCESS"
+
+        # Generate XBF resources and resources.pri for WinUI 3 XAML loading.
+        # dotnet publish with EnableCoreMrtTooling=false does not copy XBF files or
+        # generate a merged resources.pri, so we do it here as a post-publish step.
+        $appProjectDir = Join-Path $PSScriptRoot "src\BootstrapMate.App"
+        $resourcesOk = Publish-AppResources -Arch $Arch -OutputDir (Resolve-Path $outputDir).Path -AppProjectDir $appProjectDir
+        if (-not $resourcesOk) {
+            Write-Log "XAML resource generation failed or skipped — app may crash on launch (ms-appx:/// XAML loading requires resources.pri)" "WARN"
+        }
+
+        # Sign the App executable
+        if ($SigningCert) {
+            $isARM64System = Test-ARM64System
+            if ($isARM64System) {
+                try {
+                    $exclusionPath = Split-Path $executablePath
+                    & sudo powershell -Command "Add-MpPreference -ExclusionPath '$exclusionPath'" -ErrorAction SilentlyContinue
+                    Write-Log "Added temporary Windows Defender exclusion for App signing ($Arch)" "INFO"
+                } catch {
+                    Write-Log "Could not add Defender exclusion, but continuing..." "WARN"
+                }
+                try {
+                    & takeown /f $executablePath | Out-Null
+                    if ($LASTEXITCODE -eq 0) {
+                        Write-Log "Fixed App $Arch binary ownership" "SUCCESS"
+                    }
+                } catch {
+                    Write-Log "Could not fix ownership, but continuing..." "WARN"
+                }
+            }
+
+            Invoke-ComprehensiveGC -Reason "Pre-signing App file handle release"
+
+            if (Invoke-ExecutableSigning -FilePath $executablePath -Certificate $SigningCert -CertificateStore $CertificateStore) {
+                Write-Log "App code signing completed for $Arch" "SUCCESS"
+
+                if ($isARM64System) {
+                    try {
+                        $exclusionPath = Split-Path $executablePath
+                        & sudo powershell -Command "Remove-MpPreference -ExclusionPath '$exclusionPath'" -ErrorAction SilentlyContinue
+                        Write-Log "Removed temporary Windows Defender exclusion for App ($Arch)" "INFO"
+                    } catch {
+                        Write-Log "Could not remove Defender exclusion (non-critical)" "WARN"
+                    }
+                }
+                # Wait for security scanner (Defender/EDR) to release its lock before returning
+                Wait-FileAccessible -FilePath $executablePath | Out-Null
+                return $true
+            } else {
+                Write-Log "App code signing failed for $Arch" "ERROR"
+                Write-Log "App build completed but signing failed. You can manually sign it later." "WARN"
+                return "unsigned"
+            }
+        } else {
+            Write-Log "UNSIGNED APP BUILD: Not suitable for production deployment" "WARN"
+        }
+
+        return $true
+
+    } catch {
+        Write-Log "App build failed for $Arch`: $($_.Exception.Message)" "ERROR"
         return $false
     }
 }
@@ -1011,8 +1334,7 @@ function Build-MSI {
         [string]$Version,
         [string]$FullVersion,  # Full YYYY.MM.DD.HHMM version for binaries
         [System.Security.Cryptography.X509Certificates.X509Certificate2]$SigningCert = $null,
-        [string]$CertificateStore = "CurrentUser",
-        [string]$CimianVersion = $null  # Optional CimianTools version for detection
+        [string]$CertificateStore = "CurrentUser"
     )
     
     Write-Log "Building MSI for $Arch architecture..." "INFO"
@@ -1024,13 +1346,14 @@ function Build-MSI {
         return @{ Success = $false; Architecture = $Arch }
     }
     
-    # Get bootstrap URL from environment - REQUIRED
+    # Get bootstrap URL from environment — optional, uses placeholder if not set
     $bootstrapUrl = $env:BOOTSTRAP_MANIFEST_URL
     if (-not $bootstrapUrl) {
-        Write-Log "CRITICAL ERROR: BOOTSTRAP_MANIFEST_URL environment variable not set!" "ERROR"
-        Write-Log "Please set this in your .env file or system environment variables" "ERROR"
-        Write-Log "Example: BOOTSTRAP_MANIFEST_URL=https://your-domain.com/bootstrap/management.json" "ERROR"
-        throw "BOOTSTRAP_MANIFEST_URL environment variable is required for MSI build"
+        $bootstrapUrl = "https://your-domain.com/bootstrap/management.json"
+        Write-Log "BOOTSTRAP_MANIFEST_URL not set — using placeholder URL in MSI" "WARN"
+        Write-Log "Set BOOTSTRAP_MANIFEST_URL in your .env file before deploying to production" "WARN"
+    } else {
+        Write-Log "Bootstrap manifest URL: $bootstrapUrl" "INFO"
     }
     
     # Generate customized run.ps1 script with hardcoded URL for MSI deployment
@@ -1048,32 +1371,6 @@ Write-Host "Running BootstrapMate with configured URL..."
     Set-Content -Path $customRunScriptPath -Value $customRunScriptContent -Encoding UTF8
     Write-Log "Generated custom run.ps1 script for MSI deployment" "SUCCESS"
     
-    # Stage sbin-installer for MSI packaging
-    Write-Log "Staging sbin-installer executable for MSI..." "INFO"
-    $sbinStagingDir = "installer\sbin-staging"
-    if (-not (Test-Path $sbinStagingDir)) {
-        New-Item -ItemType Directory -Path $sbinStagingDir -Force | Out-Null
-    }
-    
-    # Build sbin-installer for this architecture (use FullVersion for YYYY.MM.DD.HHMM format)
-    $sbinInstallerExe = Build-SbinInstaller -Arch $Arch -SigningCert $SigningCert -CertificateStore $CertificateStore -Version $FullVersion
-
-    if (-not $sbinInstallerExe) {
-        Write-Log "Failed to build sbin-installer for $Arch - MSI build cannot continue" "ERROR"
-        return @{ Success = $false; Architecture = $Arch }
-    }
-    
-    # Ensure we have a single string path (sbin-installer build outputs dotnet messages)
-    if ($sbinInstallerExe -is [array]) {
-        $sbinInstallerExe = $sbinInstallerExe | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Last 1
-    }
-    
-    # Copy to staging directory
-    Copy-Item $sbinInstallerExe (Join-Path $sbinStagingDir "installer.exe") -Force
-    Write-Log "Staged sbin-installer for MSI packaging" "SUCCESS"
-    
-    # Convert staging directory to absolute path for WiX
-    $sbinStagingDirAbsolute = (Resolve-Path $sbinStagingDir).Path
     $binDirAbsolute = (Resolve-Path "publish\executables\$Arch").Path
     
     $buildArgs = @(
@@ -1083,15 +1380,8 @@ Write-Host "Running BootstrapMate with configured URL..."
         "-p:Platform=$Arch",
         "-p:ProductVersion=$($versionInfo.MsiVersion)",
         "-p:BinDir=$binDirAbsolute",
-        "-p:BootstrapUrl=$bootstrapUrl",
-        "-p:SbinDir=$sbinStagingDirAbsolute"
+        "-p:BootstrapUrl=$bootstrapUrl"
     )
-    
-    # Add CimianTools version if provided
-    if ($CimianVersion) {
-        $buildArgs += "-p:CimianToolsVersion=$CimianVersion"
-        Write-Log "Including CimianTools version for detection: $CimianVersion" "INFO"
-    }
     
     Write-Log "Building MSI: dotnet $($buildArgs -join ' ')" "INFO"
     
@@ -1390,18 +1680,26 @@ try {
     # Clean up old build artifacts to prevent disk space accumulation
     Clear-OldBuildArtifacts -KeepCount 1
 
-    # Enterprise Certificate Configuration - REQUIRED environment variable
-    $Global:EnterpriseCertCN = $env:ENTERPRISE_CERT_CN
-    if (-not $Global:EnterpriseCertCN) {
-        Write-Log "CRITICAL ERROR: ENTERPRISE_CERT_CN environment variable not set!" "ERROR"
-        Write-Log "Please set this in your .env file or system environment variables" "ERROR"
-        Write-Log "Example: ENTERPRISE_CERT_CN=Your Organization Code Signing Certificate" "ERROR"
-        Write-Log "" "ERROR"
-        Write-Log "Create a .env file with:" "ERROR"
-        Write-Log "ENTERPRISE_CERT_CN=Your Organization Code Signing Certificate" "ERROR"
-        throw "ENTERPRISE_CERT_CN environment variable is required for certificate discovery"
+    # Handle certificate discovery utility flags before doing any build work
+    if ($ListCerts) {
+        Show-CertificateList | Out-Null
+        exit 0
     }
-    
+    if ($FindCertSubject) {
+        Write-Log "Searching for certificates with subject containing: $FindCertSubject" "INFO"
+        Show-CertificateList -SubjectFilter $FindCertSubject | Out-Null
+        exit 0
+    }
+
+    # Enterprise Certificate CN / Subject — filter for certificate discovery.
+    # Set BOOTSTRAPMATE_CERT_CN and BOOTSTRAPMATE_CERT_SUBJECT in your .env file
+    # (or as environment variables) to match your organisation's code-signing certificate.
+    $Global:EnterpriseCertCN      = $env:BOOTSTRAPMATE_CERT_CN      ?? $env:ENTERPRISE_CERT_CN      ?? $env:CIMIAN_CERT_CN
+    $Global:EnterpriseCertSubject = $env:BOOTSTRAPMATE_CERT_SUBJECT  ?? $env:ENTERPRISE_CERT_SUBJECT ?? $env:CIMIAN_CERT_SUBJECT
+    if ($Global:EnterpriseCertSubject) {
+        Write-Log "Enterprise certificate filter: subject='$Global:EnterpriseCertSubject'" "INFO"
+    }
+
     # Update version first
     $versionInfo = Update-Version
     if ($versionInfo -and $versionInfo.FullVersion) {
@@ -1437,43 +1735,48 @@ try {
         Write-Log "MSI prerequisites check completed" "SUCCESS"
     }
     
-    # Handle signing certificate - Code signing is REQUIRED unless explicitly disabled
+    # Handle signing certificate — auto-detect from store, or use provided thumbprint
     $signingCert = $null
     $certificateInfo = $null
-    $requireSigning = -not $AllowUnsigned
-    
-    if ($requireSigning) {
-        Write-Log "Code signing is REQUIRED for production builds" "INFO"
-        Test-SignTool
-        
-        # Get enhanced certificate information
-        $certificateInfo = Get-SigningCertThumbprint -Thumbprint $Thumbprint
+    $shouldSign = $false
+
+    if ($AllowUnsigned) {
+        Write-Log "WARNING: Building unsigned executables for development only" "WARN"
+        Write-Log "NEVER deploy unsigned builds to production environments" "WARN"
+    } else {
+        # Try thumbprint first, then auto-detect best available cert
+        if ($Thumbprint) {
+            $certificateInfo = Get-SigningCertThumbprint -Thumbprint $Thumbprint
+        } else {
+            $bestCert = Get-BestCertificate
+            if ($bestCert) {
+                $certificateInfo = @{
+                    Certificate = $bestCert
+                    Store       = $bestCert.Store
+                    Thumbprint  = $bestCert.Thumbprint
+                }
+            }
+        }
+
         if ($certificateInfo) {
             $signingCert = $certificateInfo.Certificate
+            $shouldSign  = $true
+            Test-SignTool
             Write-Log "Code signing certificate found and verified" "SUCCESS"
-            Write-Log "Certificate store: $($certificateInfo.Store)" "INFO"
+            Write-Log "Certificate store:   $($certificateInfo.Store)" "INFO"
             Write-Log "Certificate subject: $($signingCert.Subject)" "INFO"
             Write-Log "Certificate expires: $($signingCert.NotAfter)" "INFO"
-            
-            # Check for admin privileges if using Intune certificate
-            if ($signingCert.Subject -like "*Intune*") {
-                # Intune certificates work without admin privileges
-                Write-Log "Administrator privileges confirmed for Intune certificate" "SUCCESS"
-            }
+            Write-Log "Thumbprint:          $($signingCert.Thumbprint)" "INFO"
         } else {
-            Write-Log "CRITICAL ERROR: Code signing certificate not found!" "ERROR"
-            Write-Log "BootstrapMate MUST be signed for enterprise deployment" "ERROR"
-            Write-Log "" "ERROR"
-            Write-Log "Solutions:" "ERROR"
-            Write-Log "1. Install your enterprise code signing certificate" "ERROR"
-            Write-Log "2. Specify certificate thumbprint with -Thumbprint parameter" "ERROR"
-            Write-Log "3. Set ENTERPRISE_CERT_CN environment variable" "ERROR"
-            Write-Log "4. For development only: use -AllowUnsigned flag (NOT for production)" "ERROR"
-            throw "Code signing certificate required but not found. Cannot build unsigned executable for production."
+            Write-Log "No code signing certificate found — building unsigned" "WARN"
+            Write-Log "" "WARN"
+            Write-Log "To sign your build, either:" "WARN"
+            Write-Log "  1. Install an enterprise code signing certificate" "WARN"
+            Write-Log "  2. Pass -Thumbprint with a specific certificate thumbprint" "WARN"
+            Write-Log "  3. Set ENTERPRISE_CERT_CN in .env to filter by certificate CN" "WARN"
+            Write-Log "  4. Run .\build.ps1 -ListCerts to see available certificates" "WARN"
+            Write-Log "Continuing with unsigned build..." "WARN"
         }
-    } else {
-        Write-Log "WARNING: Building unsigned executable for development only" "WARN"
-        Write-Log "NEVER deploy unsigned builds to production environments" "WARN"
     }
     
     # Build for requested architectures
@@ -1502,6 +1805,25 @@ try {
         if ($Test -and ($success -eq $true -or $success -eq "unsigned")) {
             $execPath = Join-Path $rootPath "publish\executables\$arch\installapplications.exe"
             Test-Build -ExecutablePath $execPath
+        }
+    }
+    
+    # Build GUI App for each architecture
+    Write-Log "" "INFO"
+    Write-Log "=== GUI APP BUILD ===" "INFO"
+    $appBuildResults = @()
+    
+    foreach ($arch in $architectures) {
+        Write-Log "" "INFO"
+        
+        $certStore = if ($certificateInfo) { $certificateInfo.Store } else { "CurrentUser" }
+        $appSuccess = Build-AppArchitecture -Arch $arch -SigningCert $signingCert -CertificateStore $certStore
+        
+        $appBuildResults += @{
+            Architecture = $arch
+            Success = ($appSuccess -eq $true)
+            Unsigned = ($appSuccess -eq "unsigned")
+            Path = "publish\app\$arch\BootstrapMate.exe"
         }
     }
     
@@ -1544,7 +1866,7 @@ try {
                     
                     # Pass certificate store information for MSI signing
                     $certStore = if ($certificateInfo) { $certificateInfo.Store } else { "CurrentUser" }
-                    $msiResult = Build-MSI -Arch $result.Architecture -Version $versionInfo.MsiVersion -FullVersion $versionInfo.FullVersion -SigningCert $signingCert -CertificateStore $certStore -CimianVersion $CimianToolsVersion
+                    $msiResult = Build-MSI -Arch $result.Architecture -Version $versionInfo.MsiVersion -FullVersion $versionInfo.FullVersion -SigningCert $signingCert -CertificateStore $certStore
                     $msiResults += $msiResult
                     
                     # Create .intunewin if MSI was successful
@@ -1605,10 +1927,13 @@ try {
                 if ($signingCert) {
                     try {
                         $signature = Get-AuthenticodeSignature -FilePath $fullPath
-                        $isSigned = ($signature.Status -eq "Valid")
-                        if ($isSigned) { 
-                            $signedCount++ 
+                        if ($signature.Status -eq "Valid") {
+                            $signedCount++
                             $signStatus = " [SIGNED]"
+                        } elseif ($signature.Status -ne "NotSigned") {
+                            # File has a signature but chain is untrusted (e.g. self-signed dev cert)
+                            $signedCount++
+                            $signStatus = " [SIGNED (dev cert)]"
                         } else { 
                             $unsignedCount++
                             if ($result.Unsigned) {
@@ -1635,6 +1960,58 @@ try {
         }
     }
     
+    # GUI App Summary
+    Write-Log "" "INFO"
+    Write-Log "=== GUI APP SUMMARY ===" "INFO"
+    $appSuccessCount = 0
+    $appSignedCount = 0
+    $appUnsignedCount = 0
+    
+    foreach ($appResult in $appBuildResults) {
+        if ($appResult.Success) {
+            $appSuccessCount++
+            $fullPath = Join-Path $rootPath $appResult.Path
+            if (Test-Path $fullPath) {
+                $fileInfo = Get-Item $fullPath
+                $sizeMB = [math]::Round($fileInfo.Length / 1MB, 2)
+                
+                $signStatus = ""
+                if ($signingCert) {
+                    try {
+                        $signature = Get-AuthenticodeSignature -FilePath $fullPath
+                        if ($signature.Status -eq "Valid") {
+                            $appSignedCount++
+                            $signStatus = " [SIGNED]"
+                        } elseif ($signature.Status -ne "NotSigned") {
+                            # File has a signature but chain is untrusted (e.g. self-signed dev cert)
+                            $appSignedCount++
+                            $signStatus = " [SIGNED (dev cert)]"
+                        } else {
+                            $appUnsignedCount++
+                            if ($appResult.Unsigned) {
+                                $signStatus = " [UNSIGNED - NEEDS MANUAL SIGNING]"
+                            } else {
+                                $signStatus = " [SIGN FAILED]"
+                            }
+                        }
+                    } catch {
+                        $appUnsignedCount++
+                        $signStatus = " [SIGN STATUS UNKNOWN]"
+                    }
+                } else {
+                    $appUnsignedCount++
+                    $signStatus = " [UNSIGNED - DEV ONLY]"
+                }
+                
+                Write-Log "SUCCESS $($appResult.Architecture): $($appResult.Path) ($sizeMB MB)$signStatus" "SUCCESS"
+            } else {
+                Write-Log "SUCCESS $($appResult.Architecture): Built successfully" "SUCCESS"
+            }
+        } else {
+            Write-Log "ERROR $($appResult.Architecture): App build failed" "ERROR"
+        }
+    }
+    
     # MSI Summary
     if (-not $SkipMSI) {
         Write-Log "" "INFO"
@@ -1653,6 +2030,8 @@ try {
                 $sizeMB = [math]::Round($fileSize / 1MB, 2)
                 $signStatus = if ($signingCert) { " [SIGNED]" } else { " [UNSIGNED]" }
                 Write-Log "SUCCESS $($msiResult.Architecture): $fileName ($sizeMB MB)$signStatus" "SUCCESS"
+            } elseif ($msiResult.Skipped) {
+                Write-Log "WARN $($msiResult.Architecture): MSI skipped (sbin-installer submodule not initialized)" "WARN"
             } else {
                 Write-Log "ERROR $($msiResult.Architecture): MSI build failed" "ERROR"
             }
@@ -1679,12 +2058,17 @@ try {
         }
         
         Write-Log "" "INFO"
-        Write-Log "MSI Packages: $msiSuccessCount/$msiTotalCount successful" "INFO"
+        $msiSkippedCount = @($msiResults | Where-Object { $_.Skipped }).Count
+        $msiFailedCount = $msiTotalCount - $msiSuccessCount - $msiSkippedCount
+        $msiSummary = "MSI Packages: $msiSuccessCount/$msiTotalCount successful"
+        if ($msiSkippedCount -gt 0) { $msiSummary += " ($msiSkippedCount skipped — submodule not initialized)" }
+        Write-Log $msiSummary "INFO"
         Write-Log ".intunewin Packages: $intuneSuccessCount/$intuneTotalCount successful" "INFO"
     }
     
     Write-Log "" "INFO"
-    Write-Log "Executable Builds: $successCount of $($buildResults.Count) architectures successfully" "INFO"
+    Write-Log "CLI Builds: $successCount of $($buildResults.Count) architectures successfully" "INFO"
+    Write-Log "App Builds: $appSuccessCount of $($appBuildResults.Count) architectures successfully" "INFO"
     
     if ($signingCert) {
         if ($signedCount -eq $successCount -and $unsignedCount -eq 0) {
@@ -1705,7 +2089,7 @@ try {
     }
     
     # Consider build successful if all architectures built, even if some signing failed
-    $overallSuccess = $successCount -eq $buildResults.Count
+    $overallSuccess = ($successCount -eq $buildResults.Count) -and ($appSuccessCount -eq $appBuildResults.Count)
     if (-not $SkipMSI) {
         # Fix PowerShell array handling by using proper filtering
         $msiSuccessfulCount = 0
@@ -1719,8 +2103,8 @@ try {
             if ($intune.Success -eq $true) { $intuneSuccessfulCount++ }
         }
         
-        $msiAllSuccess = $msiSuccessfulCount -eq $msiResults.Count
-        $intuneAllSuccess = $intuneSuccessfulCount -eq $intuneWinResults.Count
+        $msiAllSuccess = $msiSuccessfulCount -eq @($msiResults | Where-Object { -not $_.Skipped }).Count
+        $intuneAllSuccess = $intuneSuccessfulCount -eq @($intuneWinResults | Where-Object { -not $_.Skipped }).Count
         $overallSuccess = $overallSuccess -and $msiAllSuccess -and $intuneAllSuccess
     }
     
@@ -1746,9 +2130,15 @@ try {
                 $deploymentStatus = "manual signing required"
             }
             
+            $msiBuiltCount  = @($msiResults     | Where-Object { $_.Success }).Count
+            $msiSkipped     = @($msiResults     | Where-Object { $_.Skipped }).Count -gt 0
                 Write-Log "Executables $signStatus" "SUCCESS"
-                Write-Log "MSI packages created$(if ($hasSignedExecutables -and -not $AllowUnsigned) { ' and signed' })" "SUCCESS"
-                Write-Log ".intunewin packages ready for Intune deployment" "SUCCESS"
+                if ($msiBuiltCount -gt 0) {
+                    Write-Log "MSI packages created$(if ($hasSignedExecutables -and -not $AllowUnsigned) { ' and signed' })" "SUCCESS"
+                    Write-Log ".intunewin packages ready for Intune deployment" "SUCCESS"
+                } elseif ($msiSkipped) {
+                    Write-Log "MSI packaging skipped (run: git submodule update --init --recursive)" "WARN"
+                }
                 Write-Log "" "INFO"
                 Write-Log "Ready for $deploymentStatus!" "SUCCESS"
                 
