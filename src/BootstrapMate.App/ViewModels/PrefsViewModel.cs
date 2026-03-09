@@ -1,3 +1,4 @@
+using System.Net.Http;
 using CommunityToolkit.Mvvm.ComponentModel;
 using BootstrapMate.Core;
 
@@ -38,7 +39,17 @@ public partial class PrefsViewModel : ObservableObject
 
     [ObservableProperty] private string _customInstallPath = "";
     [ObservableProperty] private int _networkTimeout = BootstrapMateConstants.DefaultNetworkTimeout;
+    // ── Manifest Preview ─────────────────────────────────────
 
+    [ObservableProperty] private bool _isManifestPreviewLoading;
+    [ObservableProperty] private string _manifestPreviewContent = "";
+    [ObservableProperty] private string _manifestPreviewError = "";
+
+    public bool HasManifestPreviewContent => !string.IsNullOrEmpty(ManifestPreviewContent);
+    public bool HasManifestPreviewError   => !string.IsNullOrEmpty(ManifestPreviewError);
+
+    partial void OnManifestPreviewContentChanged(string value) => OnPropertyChanged(nameof(HasManifestPreviewContent));
+    partial void OnManifestPreviewErrorChanged(string value)   => OnPropertyChanged(nameof(HasManifestPreviewError));
     // ── Save Status ──────────────────────────────────────────────
 
     [ObservableProperty] private SaveState _saveStatus = SaveState.Idle;
@@ -157,6 +168,8 @@ public partial class PrefsViewModel : ObservableObject
         nameof(SaveStatus), nameof(SaveStatusGlyph), nameof(SaveStatusMessage),
         nameof(IsSaveStatusVisible), nameof(IsSaveEnabled), nameof(HasExistingAuth),
         nameof(AuthPlaceholderText), nameof(NetworkTimeoutValue), nameof(VersionDisplay),
+        nameof(IsManifestPreviewLoading), nameof(ManifestPreviewContent), nameof(ManifestPreviewError),
+        nameof(HasManifestPreviewContent), nameof(HasManifestPreviewError),
         "", // string.Empty from Load's bulk notify
     ];
 
@@ -236,6 +249,55 @@ public partial class PrefsViewModel : ObservableObject
         CustomInstallPath = string.IsNullOrWhiteSpace(CustomInstallPath) ? null : CustomInstallPath,
         NetworkTimeout = NetworkTimeout,
     };
+
+    // ── Manifest Preview Fetch ───────────────────────────────
+
+    /// <summary>
+    /// Fetches the configured manifest URL (with auth) and stores the raw content for display.
+    /// </summary>
+    public async Task FetchManifestPreviewAsync()
+    {
+        IsManifestPreviewLoading = true;
+        ManifestPreviewContent = "";
+        ManifestPreviewError = "";
+
+        var url = ManifestUrl;
+
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            ManifestPreviewError = "No manifest URL is configured.";
+            IsManifestPreviewLoading = false;
+            return;
+        }
+
+        try
+        {
+            var handler = new HttpClientHandler { AllowAutoRedirect = FollowRedirects };
+            using var client = new HttpClient(handler);
+            client.Timeout = TimeSpan.FromSeconds(NetworkTimeout > 0 ? NetworkTimeout : 30);
+
+            // Use the value the user has currently typed; fall back to the saved token.
+            var effectiveAuth = !string.IsNullOrWhiteSpace(AuthorizationHeader)
+                ? AuthorizationHeader
+                : ConfigManager.Instance.Config.AuthorizationHeader;
+
+            if (!string.IsNullOrWhiteSpace(effectiveAuth))
+                client.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", effectiveAuth);
+
+            var response = await client.GetAsync(url);
+            response.EnsureSuccessStatusCode();
+
+            ManifestPreviewContent = await response.Content.ReadAsStringAsync();
+        }
+        catch (Exception ex)
+        {
+            ManifestPreviewError = ex.Message;
+        }
+        finally
+        {
+            IsManifestPreviewLoading = false;
+        }
+    }
 
     private static string? FindCliExecutable()
     {
