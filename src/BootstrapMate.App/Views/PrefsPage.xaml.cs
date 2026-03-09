@@ -1,3 +1,4 @@
+using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Navigation;
@@ -25,5 +26,10 @@ public sealed partial class PrefsPage : Page
     {
         base.OnNavigatedTo(e);
         ViewModel.Load();
+    }
+
+    private async void PreviewManifestButton_Click(object sender, RoutedEventArgs e)
+    {
+        await ViewModel.FetchManifestPreviewAsync();
     }
 }
