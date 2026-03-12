@@ -13,7 +13,7 @@
   <PropertyGroup>
     <ProductVersion Condition="'$(ProductVersion)' == ''">0.0.0</ProductVersion>
     <BinDir Condition="'$(BinDir)' == ''">$(MSBuildProjectDirectory)\..\publish\executables\$(Platform)</BinDir>
-    <AppDir Condition="'$(AppDir)' == ''">$(MSBuildProjectDirectory)\..\publish\app\$(Platform)</AppDir>
+    <AppDir Condition="'$(AppDir)' == ''"></AppDir>
     <SbinDir Condition="'$(SbinDir)' == ''">$(MSBuildProjectDirectory)\sbin-staging</SbinDir>
   </PropertyGroup>
 
@@ -22,11 +22,32 @@
     <!-- Only define BootstrapUrl preprocessor variable when a non-empty URL is provided.
          WiX v6 (WIX0006) rejects Property/@Value="" so we must not pass an empty var. -->
     <DefineConstants Condition="'$(BootstrapUrl)' != ''">$(DefineConstants);BootstrapUrl=$(BootstrapUrl)</DefineConstants>
+    <!-- Suppress ICE03 (Invalid Language Id) which fires on .mui locale resource files from
+         the Windows App SDK / WinUI 3 runtime. These files have non-standard LCIDs that
+         confuse the MSI validator but install and run correctly on all Windows targets. -->
+    <SuppressIces>ICE03</SuppressIces>
   </PropertyGroup>
 
   <ItemGroup>
     <Compile Include="Product.wxs" />
   </ItemGroup>
+
+  <!-- Pre-build: generate GuiAppFiles.wxs from the GUI app publish directory.
+       HarvestDirectory MSBuild items are silently ignored by the WiX v6 NuGet-loaded SDK
+       (they only work when WiX is installed as a .NET SDK workload, unavailable on .NET 10).
+       This target calls Generate-GuiAppFiles.ps1 to produce the equivalent .wxs before CoreCompile. -->
+  <Target Name="GenerateGuiAppFilesWxs"
+          BeforeTargets="CoreCompile"
+          Condition="'$(AppDir)' != ''">
+    <PropertyGroup>
+      <_GuiWxsPath>$(IntermediateOutputPath)GuiAppFiles.wxs</_GuiWxsPath>
+    </PropertyGroup>
+    <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\Generate-GuiAppFiles.ps1&quot; -AppDir &quot;$(AppDir)&quot; -OutputPath &quot;$(_GuiWxsPath)&quot;"
+          WorkingDirectory="$(MSBuildProjectDirectory)" />
+    <ItemGroup>
+      <Compile Include="$(_GuiWxsPath)" />
+    </ItemGroup>
+  </Target>
 
   <ItemGroup>
     <PackageReference Include="WixToolset.Util.wixext" Version="6.0.2" />

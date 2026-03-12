@@ -43,17 +43,6 @@
       <RemoveFile Id="RemoveOldExecutable" Name="installapplications.exe" On="both" />
     </Component>
 
-    <!-- GUI Application -->
-    <Component Id="BootstrapMateGuiApp" Directory="INSTALLDIR" Guid="F1A2B3C4-D5E6-7890-ABCD-EF1234567890"
-               Condition="APP_DIR &lt;&gt; &quot;&quot;">
-      <File Id="BootstrapMateGuiExe" Source="$(var.APP_DIR)\BootstrapMate.exe" Vital="yes" />
-    </Component>
-
-    <!-- Runner Script -->
-    <Component Id="BootstrapMateRunnerScript" Directory="INSTALLDIR" Guid="B8F7E6D5-C4A3-9012-B456-789012345CDE">
-      <File Id="RunnerScript" Source="run.ps1" />
-    </Component>
-
     <!-- Registry entries for installation tracking AND detection -->
     <Component Id="RegistryEntries" Directory="INSTALLDIR" Guid="E5F6A7B8-C9D0-1234-EF56-789012345ABC">
       <RegistryValue Root="HKLM" Key="SOFTWARE\BootstrapMate" Name="InstallPath" Value="[INSTALLDIR]" Type="string" />
@@ -84,26 +73,10 @@
     <Property Id="BOOTSTRAP_URL" Value="$(var.BootstrapUrl)" />
     <?endif ?>
     
-    <CustomAction Id="RunBootstrapMate" 
-                  Directory="INSTALLDIR" 
-                  ExeCommand="powershell.exe -WindowStyle Hidden -NoProfile -ExecutionPolicy Bypass -File &quot;[INSTALLDIR]run.ps1&quot;"
-                  Execute="deferred"
-                  Impersonate="no"
-                  Return="ignore"
-                  HideTarget="yes" />
-
-    <!-- Installation Sequences -->
-    <InstallExecuteSequence>
-      <!-- Primary: Direct execution after files are installed -->
-      <Custom Action="RunBootstrapMate" After="InstallFiles" 
-              Condition="BOOTSTRAP_URL &lt;&gt; &quot;&quot;" />
-    </InstallExecuteSequence>
-
     <!-- Feature Definition -->
     <Feature Id="DefaultFeature" Level="1">
       <ComponentRef Id="BootstrapMateExecutable" />
-      <ComponentRef Id="BootstrapMateGuiApp" />
-      <ComponentRef Id="BootstrapMateRunnerScript" />
+      <?if $(var.APP_DIR) != "" ?><ComponentGroupRef Id="GuiAppFiles" /><?endif ?>
       <ComponentRef Id="RegistryEntries" />
       <ComponentRef Id="BootstrapRegistryEntries" />
       <ComponentRef Id="SetPathComponent" />
