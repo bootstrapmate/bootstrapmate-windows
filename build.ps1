@@ -1504,21 +1504,6 @@ function Build-MSI {
         Write-Log "Bootstrap manifest URL: $bootstrapUrl" "INFO"
     }
     
-    # Generate customized run.ps1 script with hardcoded URL for MSI deployment
-    Write-Log "Generating customized run.ps1 script with URL: $bootstrapUrl" "INFO"
-    $customRunScriptPath = "installer\run.ps1"
-    $customRunScriptContent = @"
-# BootstrapMate Simple Runner Script
-# This script provides a convenient way to run the BootstrapMate installer
-# with the configured bootstrap URL for this organization
-# Generated during build with URL: $bootstrapUrl
-
-Write-Host "Running BootstrapMate with configured URL..."
-& 'C:\Program Files\BootstrapMate\installapplications.exe' --url $bootstrapUrl --no-dialog
-"@
-    Set-Content -Path $customRunScriptPath -Value $customRunScriptContent -Encoding UTF8
-    Write-Log "Generated custom run.ps1 script for MSI deployment" "SUCCESS"
-    
     $binDirAbsolute = (Resolve-Path "publish\executables\$Arch").Path
     $appDirAbsolute = if (Test-Path "publish\app\$Arch") { (Resolve-Path "publish\app\$Arch").Path } else { "" }
     
