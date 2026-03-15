@@ -1,6 +1,6 @@
 # BootstrapMate for Windows
 
-A lightweight bootstrapping tool for Windows device provisioning that downloads and installs packages during OOBE/ESP or after user login.
+A bootstrapping tool for Windows device provisioning that downloads and installs packages during Windows Out of Box Experience (OOBE) Enrollment Status Page (ESP) or after user login.
 
 ## Features
 
