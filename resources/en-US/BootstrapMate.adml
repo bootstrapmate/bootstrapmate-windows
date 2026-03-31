@@ -27,7 +27,7 @@
 
 Example: https://example.com/bootstrap/bootstrapmate.json
 
-When set, BootstrapMate will automatically use this URL without requiring the --url command-line argument or run.ps1 script.</string>
+When set, BootstrapMate will automatically use this URL without requiring the --url command-line argument.</string>
 
       <string id="AuthorizationHeader">Authorization Header</string>
       <string id="AuthorizationHeader_Help">Authorization header value sent with manifest and package download requests.
