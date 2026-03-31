@@ -43,6 +43,12 @@
       <RemoveFile Id="RemoveOldExecutable" Name="installapplications.exe" On="both" />
     </Component>
 
+    <!-- GUI Application -->
+    <Component Id="BootstrapMateGuiApp" Directory="INSTALLDIR" Guid="F1A2B3C4-D5E6-7890-ABCD-EF1234567890"
+               Condition="APP_DIR &lt;&gt; &quot;&quot;">
+      <File Id="BootstrapMateGuiExe" Source="$(var.APP_DIR)\BootstrapMate.exe" Vital="yes" />
+    </Component>
+
     <!-- Registry entries for installation tracking AND detection -->
     <Component Id="RegistryEntries" Directory="INSTALLDIR" Guid="E5F6A7B8-C9D0-1234-EF56-789012345ABC">
       <RegistryValue Root="HKLM" Key="SOFTWARE\BootstrapMate" Name="InstallPath" Value="[INSTALLDIR]" Type="string" />
@@ -53,32 +59,28 @@
       <RegistryValue Root="HKLM" Key="SOFTWARE\BootstrapMate" Name="LastRunVersion" Value="$(var.ProductVersion)" Type="string" />
     </Component>
 
-    <!-- Bootstrap URL registry entries - only when URL is provided -->
-    <Component Id="BootstrapRegistryEntries" Directory="INSTALLDIR" Guid="A1B2C3D4-E5F6-7890-1234-56789ABCDEF0"
-               Condition="BOOTSTRAP_URL &lt;&gt; &quot;&quot;">
-      <!-- Bootstrap URL for auto-execution -->
-      <RegistryValue Root="HKLM" Key="SOFTWARE\BootstrapMate" Name="BootstrapUrl" Value="[BOOTSTRAP_URL]" Type="string" />
-      <!-- Trigger flag for auto-execution -->
-      <RegistryValue Root="HKLM" Key="SOFTWARE\BootstrapMate" Name="AutoRun" Value="1" Type="string" />
-    </Component>
+    <!-- Post-install: run installapplications.exe (ManifestUrl comes from CSP policy) -->
+    <CustomAction Id="RunBootstrapMate"
+                  FileRef="BootstrapMateExe"
+                  ExeCommand=""
+                  Impersonate="no"
+                  Execute="deferred"
+                  Return="asyncNoWait" />
+
+    <InstallExecuteSequence>
+      <Custom Action="RunBootstrapMate" Before="InstallFinalize" Condition="NOT REMOVE" />
+    </InstallExecuteSequence>
 
     <!-- Environment Variable Component -->
     <Component Id="SetPathComponent" Guid="D4E5F6A7-B8C9-0123-DEF4-56789012345A">
       <Environment Id="UpdatePath" Name="PATH" Value="[INSTALLDIR]" Permanent="no" Part="last" Action="set" Separator=";" System="yes" />
     </Component>
     
-    <!-- Custom Properties for Bootstrap URL - Set via build parameter.
-         Only emitted when BootstrapUrl was passed as a non-empty DefineConstant. -->
-    <?ifdef var.BootstrapUrl ?>
-    <Property Id="BOOTSTRAP_URL" Value="$(var.BootstrapUrl)" />
-    <?endif ?>
-    
     <!-- Feature Definition -->
     <Feature Id="DefaultFeature" Level="1">
       <ComponentRef Id="BootstrapMateExecutable" />
-      <?if $(var.APP_DIR) != "" ?><ComponentGroupRef Id="GuiAppFiles" /><?endif ?>
+      <ComponentRef Id="BootstrapMateGuiApp" />
       <ComponentRef Id="RegistryEntries" />
-      <ComponentRef Id="BootstrapRegistryEntries" />
       <ComponentRef Id="SetPathComponent" />
     </Feature>
 

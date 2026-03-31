@@ -1494,15 +1494,9 @@ function Build-MSI {
         return @{ Success = $false; Architecture = $Arch }
     }
     
-    # Get bootstrap URL from environment — optional, uses placeholder if not set
-    $bootstrapUrl = $env:BOOTSTRAP_MANIFEST_URL
-    if (-not $bootstrapUrl) {
-        $bootstrapUrl = "https://your-domain.com/bootstrap/management.json"
-        Write-Log "BOOTSTRAP_MANIFEST_URL not set — using placeholder URL in MSI" "WARN"
-        Write-Log "Set BOOTSTRAP_MANIFEST_URL in your .env file before deploying to production" "WARN"
-    } else {
-        Write-Log "Bootstrap manifest URL: $bootstrapUrl" "INFO"
-    }
+    # ManifestUrl is delivered via Intune CSP (BootstrapMatePrefs profile).
+    # No run.ps1 needed — deploy.ps1 pushes the OMA-URI profile to Intune
+    # which writes to HKLM\SOFTWARE\Policies\BootstrapMate\ManifestUrl.
     
     $binDirAbsolute = (Resolve-Path "publish\executables\$Arch").Path
     $appDirAbsolute = if (Test-Path "publish\app\$Arch") { (Resolve-Path "publish\app\$Arch").Path } else { "" }
@@ -1513,8 +1507,7 @@ function Build-MSI {
         "--verbosity", "normal",
         "-p:Platform=$Arch",
         "-p:ProductVersion=$($versionInfo.MsiVersion)",
-        "-p:BinDir=$binDirAbsolute",
-        "-p:BootstrapUrl=$bootstrapUrl"
+        "-p:BinDir=$binDirAbsolute"
     )
     if ($appDirAbsolute) {
         $buildArgs += "-p:AppDir=$appDirAbsolute"
@@ -1563,13 +1556,7 @@ function Build-MSI {
         return @{ Success = $false; Architecture = $Arch }
     }
     
-    # Clean up the generated run script and sbin staging directory
-    $customRunScriptPath = "installer\run.ps1"
-    if (Test-Path $customRunScriptPath) {
-        Remove-Item $customRunScriptPath -Force
-        Write-Log "Cleaned up generated run.ps1 script" "INFO"
-    }
-    
+    # Clean up sbin staging directory
     $sbinStagingDir = "installer\sbin-staging"
     if (Test-Path $sbinStagingDir) {
         Remove-Item $sbinStagingDir -Recurse -Force
