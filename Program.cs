@@ -1048,6 +1048,7 @@ namespace BootstrapMate
                     }
                     break;
                     
+                // TODO(pkg-sunset): Remove .pkg installation case
                 case "pkg":
                     // pkg format is native to sbin-installer
                     if (!IsSbinInstallerAvailable())
