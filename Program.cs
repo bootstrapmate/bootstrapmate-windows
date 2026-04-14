@@ -1028,7 +1028,21 @@ namespace BootstrapMate
                     break;
                     
                 case "msi":
-                    await RunMsiInstaller(filePath, packageInfo);
+                    // Cimian-built MSIs: prefer sbin-installer (handles embedded scripts natively)
+                    // Third-party MSIs: always use msiexec.exe directly
+                    bool isCimianMsi = IsCimianBuiltMsi(filePath);
+
+                    if (isCimianMsi && IsSbinInstallerAvailable())
+                    {
+                        Logger.Info($"Using sbin-installer for Cimian MSI: {Path.GetFileName(filePath)}");
+                        await RunSbinInstall(filePath, packageInfo);
+                    }
+                    else
+                    {
+                        if (isCimianMsi)
+                            Logger.Debug($"sbin-installer not available, falling back to msiexec for: {Path.GetFileName(filePath)}");
+                        await RunMsiInstaller(filePath, packageInfo);
+                    }
                     break;
                     
                 case "exe":
@@ -1479,6 +1493,32 @@ namespace BootstrapMate
         static bool IsSbinInstallerAvailable()
         {
             return FindSbinInstaller() != null;
+        }
+
+        static bool IsCimianBuiltMsi(string msiPath)
+        {
+            // Check if the MSI was built by cimipkg by scanning for the
+            // CIMIAN_PKG_BUILD_INFO property marker in the binary.
+            // Exclude known third-party MSIs that might contain the string
+            // as a false positive from binary content.
+            var fileName = Path.GetFileName(msiPath);
+            if (fileName.StartsWith("sbin-installer", StringComparison.OrdinalIgnoreCase))
+            {
+                Logger.Debug($"Skipping Cimian check for known third-party MSI: {fileName}");
+                return false;
+            }
+
+            try
+            {
+                var bytes = File.ReadAllBytes(msiPath);
+                var content = System.Text.Encoding.ASCII.GetString(bytes);
+                return content.Contains("CIMIAN_PKG_BUILD_INFO");
+            }
+            catch (Exception ex)
+            {
+                Logger.Debug($"Could not check MSI for Cimian marker: {ex.Message}");
+                return false;
+            }
         }
         
         static bool IsBrokenChocolateyInstallation()
