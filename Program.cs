@@ -641,7 +641,13 @@ namespace BootstrapMate
                 
                 using var httpClient = new HttpClient();
                 httpClient.DefaultRequestHeaders.Add("User-Agent", $"BootstrapMate/{Version}");
-                
+                var authHeader = ConfigManager.Instance.Config.AuthorizationHeader;
+                if (!string.IsNullOrEmpty(authHeader))
+                {
+                    httpClient.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", authHeader);
+                    Logger.Debug("Authorization header attached from policy");
+                }
+
                 string manifestContent = await httpClient.GetStringAsync(manifestUrl);
                 Logger.Debug("Manifest downloaded successfully");
                 
@@ -966,6 +972,9 @@ namespace BootstrapMate
                 DialogManager.Instance.NotifyDownloadStarted(displayName);
                 
                 using var httpClient = new HttpClient();
+                var authHeader = ConfigManager.Instance.Config.AuthorizationHeader;
+                if (!string.IsNullOrEmpty(authHeader))
+                    httpClient.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", authHeader);
                 using var response = await httpClient.GetAsync(url);
                 if (!response.IsSuccessStatusCode)
                 {
