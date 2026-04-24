@@ -168,56 +168,75 @@ function Wait-FileAccessible {
     return $false
 }
 
-# Function to ensure signtool is available (enhanced from CimianTools)
-function Test-SignTool {
-    $c = Get-Command signtool.exe -ErrorAction SilentlyContinue
-    if ($c) { 
-        Write-Log "Found signtool.exe in PATH: $($c.Source)" "SUCCESS"
-        return 
+# Cached absolute path to signtool.exe. Populated by Test-SignTool and returned
+# by Get-SignToolPath. All signing call sites use the absolute path so we never
+# depend on signtool being on PATH at the moment a child process is spawned.
+$script:SignToolPath = $null
+
+function Get-SignToolPath {
+    if ($script:SignToolPath -and (Test-Path $script:SignToolPath)) {
+        return $script:SignToolPath
     }
-    
-    Write-Log "signtool.exe not found in PATH, searching Windows SDK installations..." "INFO"
-    
+
+    $c = Get-Command signtool.exe -ErrorAction SilentlyContinue
+    if ($c -and $c.Source -match '\\x64\\') {
+        $script:SignToolPath = $c.Source
+        return $script:SignToolPath
+    }
+
+    # [Environment]::GetFolderPath handles the (x86) path correctly on every
+    # locale and avoids PowerShell's "$env:ProgramFiles(x86)" parse trap
+    # (parens cannot be part of an interpolated env var name, so the earlier
+    # implementation expanded to "C:\Program Files(x86)\..." — no space — and
+    # the Test-Path short-circuited the whole SDK search).
     $roots = @(
-        "$env:ProgramFiles\Windows Kits\10\bin",
-        "$env:ProgramFiles(x86)\Windows Kits\10\bin"
-    ) | Where-Object { Test-Path $_ }
+        [Environment]::GetFolderPath('ProgramFilesX86'),
+        [Environment]::GetFolderPath('ProgramFiles')
+    ) | Where-Object { $_ } | ForEach-Object { Join-Path $_ 'Windows Kits\10\bin' } |
+        Where-Object { Test-Path $_ }
 
     try {
         $kitsRoot = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows Kits\Installed Roots' -EA Stop).KitsRoot10
-        if ($kitsRoot) { 
+        if ($kitsRoot) {
             $binPath = Join-Path $kitsRoot 'bin'
-            if (Test-Path $binPath) {
+            if ((Test-Path $binPath) -and ($roots -notcontains $binPath)) {
                 $roots += $binPath
-                Write-Log "Found Windows SDK from registry: $binPath" "INFO"
             }
         }
-    } catch {
-        Write-Log "No Windows SDK found in registry" "INFO"
-    }
+    } catch { }
 
     foreach ($root in $roots) {
-        # Look for signtool in architecture-specific subdirectories
-        $patterns = @(
-            Join-Path $root '*\x64\signtool.exe',
-            Join-Path $root '*\arm64\signtool.exe',
-            Join-Path $root '*\x86\signtool.exe'
-        )
-        
-        foreach ($pattern in $patterns) {
-            $candidates = Get-ChildItem -Path $pattern -EA SilentlyContinue | Sort-Object LastWriteTime -Desc
+        # Prefer x64 signtool; fall back to arm64 / x86 only if nothing else
+        # is present. Sort descending by SDK version (directory name) so we
+        # pick up the newest SDK on boxes with multiple installs.
+        foreach ($arch in @('x64', 'arm64', 'x86')) {
+            $pattern = Join-Path $root "*\$arch\signtool.exe"
+            $candidates = Get-ChildItem -Path $pattern -ErrorAction SilentlyContinue |
+                Sort-Object { $_.Directory.Parent.Name } -Descending
             if ($candidates) {
-                $bestCandidate = $candidates | Select-Object -First 1
-                $signtoolDir = $bestCandidate.Directory.FullName
-                $env:Path = "$signtoolDir;$env:Path"
-                Write-Log "Found signtool.exe: $($bestCandidate.FullName)" "SUCCESS"
-                Write-Log "Added to PATH: $signtoolDir" "INFO"
-                return
+                $script:SignToolPath = $candidates[0].FullName
+                return $script:SignToolPath
             }
         }
     }
-    
-    throw "signtool.exe not found. Install Windows 10/11 SDK with Signing Tools component."
+
+    return $null
+}
+
+function Test-SignTool {
+    $path = Get-SignToolPath
+    if (-not $path) {
+        throw "signtool.exe not found. Install Windows 10/11 SDK with Signing Tools component."
+    }
+    Write-Log "Using signtool.exe: $path" "SUCCESS"
+
+    # Also prepend the containing directory to PATH so any child process that
+    # inherits our environment and calls `signtool.exe` by bare name finds it.
+    # The cached absolute path is still the source of truth for our own calls.
+    $signtoolDir = Split-Path $path -Parent
+    if ($env:Path -notmatch [regex]::Escape($signtoolDir)) {
+        $env:Path = "$signtoolDir;$env:Path"
+    }
 }
 
 # Function to find signing certificate (enhanced from CimianTools)
@@ -492,9 +511,10 @@ function Invoke-SignArtifact {
                     $Path
                 )
                 
-                Write-Log "Running: signtool.exe $($signArgs -join ' ')" "INFO"
-                
-                & signtool.exe @signArgs
+                $signtool = Get-SignToolPath
+                Write-Log "Running: $signtool $($signArgs -join ' ')" "INFO"
+
+                & $signtool @signArgs
                 $code = $LASTEXITCODE
 
                 if ($code -eq 0) {
@@ -503,7 +523,7 @@ function Invoke-SignArtifact {
                     # Optional: append legacy timestamp for compatibility with older verifiers
                     try {
                         Write-Log "Adding legacy timestamp for compatibility..." "INFO"
-                        & signtool.exe timestamp /t http://timestamp.digicert.com /v "$Path" 2>$null
+                        & $signtool timestamp /t http://timestamp.digicert.com /v "$Path" 2>$null
                         if ($LASTEXITCODE -eq 0) {
                             Write-Log "Legacy timestamp added successfully" "SUCCESS"
                         } else {
@@ -517,7 +537,7 @@ function Invoke-SignArtifact {
                     # self-signed dev certs pass the sign step but fail chain verification.
                     # Treat sign exit code 0 as the authoritative success indicator.
                     Write-Log "Verifying signature..." "INFO"
-                    $verifyOutput = & signtool.exe verify /pa "$Path" 2>&1
+                    $verifyOutput = & $signtool verify /pa "$Path" 2>&1
                     if ($LASTEXITCODE -eq 0) {
                         Write-Log "Signature verification successful!" "SUCCESS"
                     } else {
@@ -571,7 +591,7 @@ function Invoke-SignArtifact {
             
             # Execute with sudo directly (not through cmd)
             $sudoArgs = @(
-                "signtool.exe",
+                (Get-SignToolPath),
                 "sign",
                 "/s", $storeArg
             )
@@ -593,7 +613,7 @@ function Invoke-SignArtifact {
                 
                 # Verify the signature
                 Write-Log "Verifying sudo-signed signature..." "INFO"
-                & signtool.exe verify /pa "$Path"
+                & (Get-SignToolPath) verify /pa "$Path"
                 if ($LASTEXITCODE -eq 0) {
                     Write-Log "Sudo signature verification successful!" "SUCCESS"
                     return $true
@@ -815,13 +835,14 @@ function Invoke-ExecutableSigning {
                 Write-Log "Using sudo to elevate signtool privileges for signing..." "INFO"
                 try {
                     # Use sudo with signtool directly for elevated signing
-                    $sudoResult = sudo signtool.exe sign /s $CertificateStore /sha1 $Certificate.Thumbprint /fd SHA256 /td SHA256 /tr "http://timestamp.digicert.com" /v "$FilePath" 2>&1
-                    
+                    $signtool = Get-SignToolPath
+                    $sudoResult = sudo $signtool sign /s $CertificateStore /sha1 $Certificate.Thumbprint /fd SHA256 /td SHA256 /tr "http://timestamp.digicert.com" /v "$FilePath" 2>&1
+
                     if ($LASTEXITCODE -eq 0) {
                         Write-Log "Successfully signed using sudo elevation: $([System.IO.Path]::GetFileName($FilePath))" "SUCCESS"
-                        
+
                         # Verify the signature
-                        $verifyResult = signtool.exe verify /pa /v "$FilePath" 2>&1
+                        $verifyResult = & $signtool verify /pa /v "$FilePath" 2>&1
                         if ($LASTEXITCODE -eq 0) {
                             Write-Log "Signature verification successful with sudo signing!" "SUCCESS"
                         } else {
