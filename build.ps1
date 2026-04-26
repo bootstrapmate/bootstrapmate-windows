@@ -178,11 +178,19 @@ function Get-SignToolPath {
         return $script:SignToolPath
     }
 
+    # Accept any signtool already on PATH. We prefer the SDK's x64 build
+    # (more capable, matches what `signtool.exe` shipped with the Windows 10/11
+    # SDK references), but rejecting an x86/arm64 PATH hit would be a
+    # regression vs the prior behaviour and break hosts where only those
+    # SignTool flavours are installed. If PATH does point at a non-x64
+    # signtool, still run the SDK search below for a better candidate;
+    # only fall back to the PATH hit if nothing better is found.
     $c = Get-Command signtool.exe -ErrorAction SilentlyContinue
     if ($c -and $c.Source -match '\\x64\\') {
         $script:SignToolPath = $c.Source
         return $script:SignToolPath
     }
+    $pathFallback = if ($c) { $c.Source } else { $null }
 
     # [Environment]::GetFolderPath handles the (x86) path correctly on every
     # locale and avoids PowerShell's "$env:ProgramFiles(x86)" parse trap
@@ -220,7 +228,30 @@ function Get-SignToolPath {
         }
     }
 
+    # Nothing in the SDK locations — accept the non-x64 PATH hit if we had one.
+    if ($pathFallback) {
+        $script:SignToolPath = $pathFallback
+        return $script:SignToolPath
+    }
+
     return $null
+}
+
+<#
+.SYNOPSIS
+Resolve signtool, throwing a clear error when not found.
+
+.DESCRIPTION
+Use this at every signing call site. It guarantees callers either get a
+non-empty absolute path or a deterministic, actionable error — never a
+`& $null` invocation.
+#>
+function Resolve-SignToolPath {
+    $path = Get-SignToolPath
+    if ([string]::IsNullOrWhiteSpace($path)) {
+        throw "signtool.exe could not be resolved. Install the Windows 10/11 SDK with the Signing Tools component, or call Test-SignTool earlier in the build to surface a clearer error."
+    }
+    return $path
 }
 
 function Test-SignTool {
@@ -511,7 +542,7 @@ function Invoke-SignArtifact {
                     $Path
                 )
                 
-                $signtool = Get-SignToolPath
+                $signtool = Resolve-SignToolPath
                 Write-Log "Running: $signtool $($signArgs -join ' ')" "INFO"
 
                 & $signtool @signArgs
@@ -589,9 +620,12 @@ function Invoke-SignArtifact {
             
             Write-Log "Running with sudo: signtool.exe sign /s $storeArg $(if($storeModifier){$storeModifier}) /sha1 $Thumbprint /fd SHA256 /td SHA256 /tr $primaryTsa /v `"$Path`"" "INFO"
             
-            # Execute with sudo directly (not through cmd)
+            # Execute with sudo directly (not through cmd). Resolve once so the
+            # log line, $sudoArgs, and the post-sign verify all reference the
+            # same absolute path.
+            $signtool = Resolve-SignToolPath
             $sudoArgs = @(
-                (Get-SignToolPath),
+                $signtool,
                 "sign",
                 "/s", $storeArg
             )
@@ -613,7 +647,7 @@ function Invoke-SignArtifact {
                 
                 # Verify the signature
                 Write-Log "Verifying sudo-signed signature..." "INFO"
-                & (Get-SignToolPath) verify /pa "$Path"
+                & $signtool verify /pa "$Path"
                 if ($LASTEXITCODE -eq 0) {
                     Write-Log "Sudo signature verification successful!" "SUCCESS"
                     return $true
@@ -835,7 +869,7 @@ function Invoke-ExecutableSigning {
                 Write-Log "Using sudo to elevate signtool privileges for signing..." "INFO"
                 try {
                     # Use sudo with signtool directly for elevated signing
-                    $signtool = Get-SignToolPath
+                    $signtool = Resolve-SignToolPath
                     $sudoResult = sudo $signtool sign /s $CertificateStore /sha1 $Certificate.Thumbprint /fd SHA256 /td SHA256 /tr "http://timestamp.digicert.com" /v "$FilePath" 2>&1
 
                     if ($LASTEXITCODE -eq 0) {
