@@ -43,11 +43,9 @@
       <RemoveFile Id="RemoveOldExecutable" Name="installapplications.exe" On="both" />
     </Component>
 
-    <!-- GUI Application -->
-    <Component Id="BootstrapMateGuiApp" Directory="INSTALLDIR" Guid="F1A2B3C4-D5E6-7890-ABCD-EF1234567890"
-               Condition="APP_DIR &lt;&gt; &quot;&quot;">
-      <File Id="BootstrapMateGuiExe" Source="$(var.APP_DIR)\BootstrapMate.exe" Vital="yes" />
-    </Component>
+    <!-- GUI Application files (BootstrapMate.exe + WinUI 3 dependencies) are
+         harvested from $(APP_DIR) into the GuiAppFiles ComponentGroup by the
+         Generate-GuiAppFiles.ps1 pre-build target in the wixproj. -->
 
     <!-- Registry entries for installation tracking AND detection -->
     <Component Id="RegistryEntries" Directory="INSTALLDIR" Guid="E5F6A7B8-C9D0-1234-EF56-789012345ABC">
@@ -79,7 +77,7 @@
     <!-- Feature Definition -->
     <Feature Id="DefaultFeature" Level="1">
       <ComponentRef Id="BootstrapMateExecutable" />
-      <ComponentRef Id="BootstrapMateGuiApp" />
+      <ComponentGroupRef Id="GuiAppFiles" />
       <ComponentRef Id="RegistryEntries" />
       <ComponentRef Id="SetPathComponent" />
     </Feature>

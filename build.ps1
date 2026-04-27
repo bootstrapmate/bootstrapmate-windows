@@ -1165,8 +1165,18 @@ function Publish-AppResources {
         "${env:ProgramFiles(x86)}\Windows Kits\10\bin"
     ) | Where-Object { Test-Path $_ }
 
+    # makepri.exe runs on the HOST, not the target. Prefer the host arch first
+    # so we don't pick e.g. arm64\makepri.exe on an x64 box (which fails with
+    # "not a valid application for this OS platform").
+    $hostArch = switch ($env:PROCESSOR_ARCHITECTURE) {
+        'AMD64' { 'x64' }
+        'ARM64' { 'arm64' }
+        default { 'x86' }
+    }
+    $toolArchOrder = @($hostArch) + (@('x64','arm64','x86') | Where-Object { $_ -ne $hostArch })
+
     foreach ($root in $sdkBinRoots) {
-        foreach ($toolArch in @("arm64", "x64", "x86")) {
+        foreach ($toolArch in $toolArchOrder) {
             $candidates = Get-ChildItem "$root\*\$toolArch\makepri.exe" -ErrorAction SilentlyContinue |
                 Sort-Object { [version]($_.FullName -replace '.*\\(\d+\.\d+\.\d+\.\d+)\\.*', '$1') } -Descending |
                 Select-Object -First 1

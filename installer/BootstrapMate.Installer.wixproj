@@ -29,9 +29,28 @@
     <PackageReference Include="WixToolset.Util.wixext" Version="6.0.2" />
   </ItemGroup>
 
+  <!-- Suppress ICE03 (Invalid Language Id / String overflow in File.Language).
+       The WinUI 3 MUI files harvested from publish/app/<arch>/ include locales
+       (gd-gb, mi-NZ) whose LCIDs are not in the ICE validation table, and the
+       master Microsoft.ui.xaml.dll has more locales than the File.Language
+       column's 255-char limit. Both are benign for actual install/uninstall. -->
+  <PropertyGroup>
+    <SuppressIces>ICE03</SuppressIces>
+  </PropertyGroup>
+
+  <Target Name="GenerateGuiAppFiles" BeforeTargets="BeforeBuild">
+    <MakeDir Directories="$(IntermediateOutputPath)" />
+    <Exec Command="pwsh -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\Generate-GuiAppFiles.ps1&quot; -AppDir &quot;$(AppDir)&quot; -OutputPath &quot;$(IntermediateOutputPath)GuiAppFiles.wxs&quot;" />
+    <ItemGroup>
+      <Compile Include="$(IntermediateOutputPath)GuiAppFiles.wxs" />
+    </ItemGroup>
+  </Target>
+
   <Target Name="BeforeBuild">
     <Error Text="BootstrapMate executable not found at $(BinDir)\installapplications.exe. Please run build.ps1 first."
            Condition="!Exists('$(BinDir)\installapplications.exe')" />
+    <Error Text="BootstrapMate GUI app directory not found at $(AppDir). Run build.ps1 to publish the GUI before building the MSI."
+           Condition="!Exists('$(AppDir)\BootstrapMate.exe')" />
   </Target>
 
 </Project>
