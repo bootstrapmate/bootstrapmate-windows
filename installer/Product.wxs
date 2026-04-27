@@ -44,8 +44,8 @@
     </Component>
 
     <!-- GUI Application files (BootstrapMate.exe + WinUI 3 dependencies) are
-         harvested from $(APP_DIR) into the GuiAppFiles ComponentGroup by the
-         Generate-GuiAppFiles.ps1 pre-build target in the wixproj. -->
+         harvested from $(var.APP_DIR) into the GuiAppFiles ComponentGroup by
+         the Generate-GuiAppFiles.ps1 pre-build target in the wixproj. -->
 
     <!-- Registry entries for installation tracking AND detection -->
     <Component Id="RegistryEntries" Directory="INSTALLDIR" Guid="E5F6A7B8-C9D0-1234-EF56-789012345ABC">

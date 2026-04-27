@@ -38,7 +38,12 @@
     <SuppressIces>ICE03</SuppressIces>
   </PropertyGroup>
 
-  <Target Name="GenerateGuiAppFiles" BeforeTargets="BeforeBuild">
+  <!-- Skip when the GUI publish output is missing — the BeforeBuild target
+       below will then fail with a clearer, more actionable message rather
+       than the harvester script's stack trace. -->
+  <Target Name="GenerateGuiAppFiles"
+          BeforeTargets="BeforeBuild"
+          Condition="Exists('$(AppDir)\BootstrapMate.exe')">
     <MakeDir Directories="$(IntermediateOutputPath)" />
     <Exec Command="pwsh -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\Generate-GuiAppFiles.ps1&quot; -AppDir &quot;$(AppDir)&quot; -OutputPath &quot;$(IntermediateOutputPath)GuiAppFiles.wxs&quot;" />
     <ItemGroup>
@@ -49,7 +54,7 @@
   <Target Name="BeforeBuild">
     <Error Text="BootstrapMate executable not found at $(BinDir)\installapplications.exe. Please run build.ps1 first."
            Condition="!Exists('$(BinDir)\installapplications.exe')" />
-    <Error Text="BootstrapMate GUI app directory not found at $(AppDir). Run build.ps1 to publish the GUI before building the MSI."
+    <Error Text="BootstrapMate GUI app executable not found at $(AppDir)\BootstrapMate.exe. Run build.ps1 to publish the GUI before building the MSI."
            Condition="!Exists('$(AppDir)\BootstrapMate.exe')" />
   </Target>
 
