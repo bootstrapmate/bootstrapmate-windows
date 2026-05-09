@@ -1,0 +1,94 @@
+# BootstrapMate Windows — CI build (no release)
+#
+# Triggers:
+#   - Push to main → build only
+#   - Pull request → build only
+# Tag-triggered releases live in release.yml.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  build:
+    name: Build (${{ matrix.arch }})
+    runs-on: windows-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~\.nuget\packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/Directory.Build.props', '**/Directory.Packages.props') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-
+
+      - name: Generate version
+        id: version
+        shell: pwsh
+        run: |
+          $now  = Get-Date
+          $msi  = "$($now.Year - 2000).$($now.Month).$($now.Day).$($now.ToString('HHmm'))"
+          "msi=$msi" | Out-File -Append $env:GITHUB_OUTPUT
+
+      - name: Build CLI (installapplications.exe)
+        run: >
+          dotnet publish BootstrapMate.csproj
+          --configuration Release
+          --runtime win-${{ matrix.arch }}
+          --output publish/executables/${{ matrix.arch }}
+          --self-contained true
+          --verbosity minimal
+
+      - name: Build GUI App (BootstrapMate.exe)
+        run: >
+          dotnet publish src/BootstrapMate.App/BootstrapMate.App.csproj
+          --configuration Release
+          --runtime win-${{ matrix.arch }}
+          --output publish/app/${{ matrix.arch }}
+          --self-contained true
+          --verbosity minimal
+
+      - name: Build MSI
+        shell: pwsh
+        run: |
+          $binDir = (Resolve-Path "publish/executables/${{ matrix.arch }}").Path
+          $appDir = (Resolve-Path "publish/app/${{ matrix.arch }}").Path
+          $dotnetArgs = @(
+            "build", "installer/BootstrapMate.Installer.wixproj",
+            "--configuration", "Release",
+            "--verbosity", "minimal",
+            "-p:Platform=${{ matrix.arch }}",
+            "-p:ProductVersion=${{ steps.version.outputs.msi }}",
+            "-p:BinDir=$binDir",
+            "-p:AppDir=$appDir"
+          )
+          dotnet @dotnetArgs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

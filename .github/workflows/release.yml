@@ -1,0 +1,231 @@
+# BootstrapMate Windows — Tag-triggered release (MSI + zip per arch)
+#
+# Triggers:
+#   - Tag v* → full release with MSI + zips, GitHub Release published
+# CI builds on push/PR live in ci.yml.
+
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  build:
+    name: Build (${{ matrix.arch }})
+    runs-on: windows-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~\.nuget\packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/Directory.Build.props', '**/Directory.Packages.props') }}
+
+      - name: Derive version from tag
+        id: version
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $full = $tag -replace '^v',''
+          if ($full -match '^(\d+)\.(\d+)\.(\d+)\.(\d+)$') {
+            $msi = "$([int]$Matches[1] - 2000).$([int]$Matches[2]).$([int]$Matches[3]).$($Matches[4])"
+          } else {
+            $msi = $full
+          }
+          "full=$full" | Out-File -Append $env:GITHUB_OUTPUT
+          "msi=$msi"   | Out-File -Append $env:GITHUB_OUTPUT
+
+      - name: Build CLI (installapplications.exe)
+        run: >
+          dotnet publish BootstrapMate.csproj
+          --configuration Release
+          --runtime win-${{ matrix.arch }}
+          --output publish/executables/${{ matrix.arch }}
+          --self-contained true
+          --verbosity minimal
+
+      - name: Build GUI App (BootstrapMate.exe)
+        run: >
+          dotnet publish src/BootstrapMate.App/BootstrapMate.App.csproj
+          --configuration Release
+          --runtime win-${{ matrix.arch }}
+          --output publish/app/${{ matrix.arch }}
+          --self-contained true
+          --verbosity minimal
+
+      - name: Generate resources.pri
+        shell: pwsh
+        run: |
+          $arch = "${{ matrix.arch }}"
+          $outputDir = (Resolve-Path "publish/app/$arch").Path
+          $appProjectDir = Join-Path $PWD "src/BootstrapMate.App"
+
+          $makepri = $null
+          $sdkBinRoots = @(
+            "$env:ProgramFiles\Windows Kits\10\bin",
+            "${env:ProgramFiles(x86)}\Windows Kits\10\bin"
+          ) | Where-Object { Test-Path $_ }
+          foreach ($root in $sdkBinRoots) {
+            foreach ($toolArch in @("x64", "arm64", "x86")) {
+              $hit = Get-ChildItem "$root\*\$toolArch\makepri.exe" -ErrorAction SilentlyContinue |
+                Sort-Object { [version]($_.FullName -replace '.*\\(\d+\.\d+\.\d+\.\d+)\\.*','$1') } -Descending |
+                Select-Object -First 1
+              if ($hit) { $makepri = $hit.FullName; break }
+            }
+            if ($makepri) { break }
+          }
+          if (-not $makepri) {
+            Write-Host "::warning::makepri.exe not found — skipping resources.pri generation"
+            exit 0
+          }
+
+          $xbfFiles = Get-ChildItem "$appProjectDir\obj\Release" -Recurse -Filter "*.xbf" -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match [regex]::Escape("\win-$arch\") }
+          if (-not $xbfFiles) {
+            Write-Host "::warning::No XBF files found — skipping resources.pri"
+            exit 0
+          }
+
+          $xbfRootPath = ($xbfFiles[0].FullName -split [regex]::Escape("\win-$arch\"))[0] + "\win-$arch"
+          $stagingDir = Join-Path ([System.IO.Path]::GetTempPath()) "bootstrapmate-pri-$arch"
+          if (Test-Path $stagingDir) { Remove-Item $stagingDir -Recurse -Force }
+          New-Item -ItemType Directory $stagingDir -Force | Out-Null
+
+          foreach ($xbf in $xbfFiles) {
+            $rel = $xbf.FullName.Substring($xbfRootPath.Length).TrimStart('\')
+            $stageDest = Join-Path $stagingDir $rel
+            $stageDestDir = Split-Path $stageDest
+            if (-not (Test-Path $stageDestDir)) { New-Item -ItemType Directory $stageDestDir -Force | Out-Null }
+            Copy-Item $xbf.FullName $stageDest -Force
+            $outDest = Join-Path $outputDir $rel
+            $outDestDir = Split-Path $outDest
+            if (-not (Test-Path $outDestDir)) { New-Item -ItemType Directory $outDestDir -Force | Out-Null }
+            Copy-Item $xbf.FullName $outDest -Force
+          }
+
+          Get-ChildItem $outputDir -Filter "Microsoft.*.pri" -ErrorAction SilentlyContinue | ForEach-Object {
+            Copy-Item $_.FullName (Join-Path $stagingDir $_.Name) -Force
+          }
+
+          $priconfigPath = Join-Path $stagingDir "priconfig.xml"
+          & $makepri createconfig /cf $priconfigPath /dq "en-US" /pv "10.0.0" /o 2>&1 | Out-Null
+
+          $priOutput = Join-Path $outputDir "resources.pri"
+          $result = & $makepri new /pr $stagingDir /cf $priconfigPath /in "BootstrapMate" /of $priOutput /o 2>&1
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "::error::makepri.exe failed (exit $LASTEXITCODE): $result"
+            exit 1
+          }
+          Remove-Item $stagingDir -Recurse -Force -ErrorAction SilentlyContinue
+
+      - name: Build MSI
+        shell: pwsh
+        run: |
+          $binDir = (Resolve-Path "publish/executables/${{ matrix.arch }}").Path
+          $appDir = (Resolve-Path "publish/app/${{ matrix.arch }}").Path
+          $dotnetArgs = @(
+            "build", "installer/BootstrapMate.Installer.wixproj",
+            "--configuration", "Release",
+            "--verbosity", "detailed",
+            "-p:Platform=${{ matrix.arch }}",
+            "-p:ProductVersion=${{ steps.version.outputs.msi }}",
+            "-p:BinDir=$binDir",
+            "-p:AppDir=$appDir"
+          )
+          dotnet @dotnetArgs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Stage release artifacts
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.full }}"
+          $arch    = "${{ matrix.arch }}"
+          $staging = "staging"
+          New-Item -ItemType Directory -Path $staging -Force | Out-Null
+
+          $msi = Get-ChildItem "installer/bin" -Filter "*.msi" -Recurse | Select-Object -First 1
+          if ($msi) {
+            Copy-Item $msi.FullName "$staging/BootstrapMate-$arch-$version.msi"
+          }
+
+          $zipDir = Join-Path $env:RUNNER_TEMP "zip-$arch"
+          New-Item -ItemType Directory -Path $zipDir -Force | Out-Null
+          Copy-Item "publish/executables/$arch/installapplications.exe" $zipDir/
+          if (Test-Path "publish/app/$arch/BootstrapMate.exe") {
+            Copy-Item "publish/app/$arch/*" $zipDir/ -Recurse
+          }
+          Compress-Archive -Path "$zipDir/*" -DestinationPath "$staging/BootstrapMate-$arch-$version.zip" -Force
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: bootstrapmate-${{ matrix.arch }}
+          path: staging/*
+          retention-days: 14
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List artifacts
+        run: find artifacts -type f | sort
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: artifacts/*
+          fail_on_unmatched_files: false
+          body: |
+            ## Code Signing
+
+            The binaries in this release are **unsigned**. If your organisation requires signed executables before deployment, sign them locally with `signtool.exe` from the [Windows SDK](https://developer.microsoft.com/windows/downloads/windows-sdk/):
+
+            ```powershell
+            signtool.exe sign `
+              /s My `
+              /sha1 <YOUR_CERT_THUMBPRINT> `
+              /fd SHA256 /td SHA256 `
+              /tr http://timestamp.digicert.com `
+              /v BootstrapMate-<arch>-<version>.msi
+            ```
+
+            ## Deployment
+
+            Deploy the signed MSI via Intune or any standard MDM tool. Registry-based detection rule:
+            `HKLM:\SOFTWARE\BootstrapMate` → `Version` equals `${{ github.ref_name }}`
