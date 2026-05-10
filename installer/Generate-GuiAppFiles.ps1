@@ -29,13 +29,20 @@ $lines.Add('  <Fragment>')
 $lines.Add('    <ComponentGroup Id="GuiAppFiles" Directory="INSTALLDIR">')
 
 $files = Get-ChildItem -Path $appDir -Recurse -File | Sort-Object FullName
-$idx = 0
+$sha1  = [System.Security.Cryptography.SHA1]::Create()
 foreach ($file in $files) {
-    $idx++
     $relPath = $file.FullName.Substring($appDir.Length + 1)
     $relDir  = [System.IO.Path]::GetDirectoryName($relPath)
-    $compId  = 'c_{0:D5}' -f $idx
-    $fileId  = 'f_{0:D5}' -f $idx
+
+    # Deterministic IDs derived from a SHA1 hash of the relative path so that
+    # unchanged files keep the same Component Id (and therefore the same
+    # Guid="*"-derived GUID) across builds. Sequential IDs would shift whenever
+    # files are added/removed (e.g. WinUI 3 ships a new locale), regenerating
+    # most GUIDs and breaking MSI upgrade tracking — orphaning old components
+    # or duplicating files at the same path.
+    $hashHex = [System.BitConverter]::ToString($sha1.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($relPath.ToLowerInvariant()))).Replace('-','').Substring(0,16).ToLowerInvariant()
+    $compId  = "c_$hashHex"
+    $fileId  = "f_$hashHex"
 
     if ($relDir) {
         $lines.Add("      <Component Id=`"$compId`" Guid=`"*`" Subdirectory=`"$relDir`">")
