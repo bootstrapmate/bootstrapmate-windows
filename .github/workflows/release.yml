@@ -219,7 +219,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           $tag = '${{ github.ref_name }}'
-          $title = "BootstrapMate for Windows $tag"
+          $title = "BootstrapMate $tag"
           $dotnet = (dotnet --version).Trim()
           $os = (Get-CimInstance Win32_OperatingSystem).Caption.Trim()
           $runUrl = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
