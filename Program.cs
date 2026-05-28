@@ -992,8 +992,11 @@ namespace BootstrapMate
                 await Task.Delay(100);
                 
                 var fileInfo = new FileInfo(localPath);
-                Logger.Debug($"Downloaded {displayName} to: {localPath} (Size: {fileInfo.Length / 1024 / 1024:F2} MB)");
-                Logger.WriteSubProgress("Downloaded", $"{fileInfo.Length / 1024 / 1024:F1} MB");
+                var sizeText = fileInfo.Length < 1024 * 1024
+                    ? $"{fileInfo.Length / 1024.0:F1} KB"
+                    : $"{fileInfo.Length / 1024.0 / 1024:F1} MB";
+                Logger.Debug($"Downloaded {displayName} to: {localPath} (Size: {sizeText})");
+                Logger.WriteSubProgress("Downloaded", sizeText);
                 
                 // Install based on type
                 Logger.Debug($"Installing {displayName} using {type} installer...");
