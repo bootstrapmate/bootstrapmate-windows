@@ -88,7 +88,8 @@
                 Target="[INSTALLDIR]BootstrapMate.exe"
                 WorkingDirectory="INSTALLDIR" />
       <RemoveFolder Id="CleanupApplicationProgramsFolder" Directory="ApplicationProgramsFolder" On="uninstall" />
-      <RegistryValue Root="HKLM" Key="SOFTWARE\BootstrapMate" Name="StartMenuShortcutInstalled" Type="integer" Value="1" KeyPath="yes" />
+      <!-- HKCU KeyPath required by MSI for shortcut-only components (ICE38/43/57). -->
+      <RegistryValue Root="HKCU" Key="Software\BootstrapMate" Name="StartMenuShortcutInstalled" Type="integer" Value="1" KeyPath="yes" />
     </Component>
 
     <!-- Feature Definition -->
