@@ -68,10 +68,10 @@
                      Type="string" KeyPath="yes" />
     </Component>
 
-    <!-- Post-install: run installapplications.exe.
-         --force ensures fresh download (cache cleared) so every MSI update reprocesses the manifest.
-         --no-dialog keeps the install silent under Intune. ManifestUrl is resolved by ConfigManager
-         from CSP > HKLM Settings > HKCU > baked-in default. -->
+    <!-- Post-install: run installapplications.exe with force + no-dialog.
+         "force" clears the cache so every MSI update reprocesses the manifest;
+         "no-dialog" keeps Intune install silent. ManifestUrl is resolved by
+         ConfigManager from CSP / HKLM Settings / HKCU / baked-in default. -->
     <CustomAction Id="RunBootstrapMate"
                   FileRef="BootstrapMateExe"
                   ExeCommand="--force --no-dialog"
