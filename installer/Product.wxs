@@ -68,22 +68,24 @@
                      Type="string" KeyPath="yes" />
     </Component>
 
-    <!-- Post-install: run installapplications.exe with force + no-dialog.
-         "force" clears the cache so every MSI update reprocesses the manifest;
-         "no-dialog" keeps Intune install silent. ManifestUrl is resolved by
-         ConfigManager from CSP / HKLM Settings / HKCU / baked-in default. -->
-    <CustomAction Id="RunBootstrapMate"
-                  FileRef="BootstrapMateExe"
-                  ExeCommand="--force --no-dialog"
-                  Impersonate="no"
-                  Execute="deferred"
-                  Return="asyncNoWait" />
+    <!-- Post-install: trigger the SelfHeal scheduled task via schtasks /Run.
+         We cannot call installapplications.exe directly from a deferred CA
+         because installapplications spawns child msiexec processes for the
+         packages in management.json, and child msiexec deadlocks waiting for
+         this MSI to release the Windows Installer mutex. Routing through the
+         scheduled task runs it in its own process tree after this MSI
+         finalizes, avoiding the mutex and any Intune wrapper timeout. -->
+    <SetProperty Id="RunBootstrapMate"
+                 Value="&quot;[System64Folder]schtasks.exe&quot; /Run /TN &quot;BootstrapMate Self-Heal&quot;"
+                 Before="RunBootstrapMate" Sequence="execute" />
+    <CustomAction Id="RunBootstrapMate" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec"
+                  Execute="deferred" Return="ignore" Impersonate="no" />
 
     <!-- Daily self-healing: register a scheduled task that re-runs installapplications.exe as
          SYSTEM with no args (picks up CSP / HKLM Settings / default URL). Runs daily at 03:00,
          missed schedules run at next logon. Inline schtasks call avoids needing an external XML. -->
     <SetProperty Id="RegisterSelfHealTask"
-                 Value="&quot;[System64Folder]schtasks.exe&quot; /Create /TN &quot;BootstrapMate Self-Heal&quot; /TR &quot;\&quot;[INSTALLDIR]installapplications.exe\&quot; --silent&quot; /SC DAILY /ST 03:00 /RU SYSTEM /RL HIGHEST /F"
+                 Value="&quot;[System64Folder]schtasks.exe&quot; /Create /TN &quot;BootstrapMate Self-Heal&quot; /TR &quot;\&quot;[INSTALLDIR]installapplications.exe\&quot; --force --silent --no-dialog&quot; /SC DAILY /ST 03:00 /RU SYSTEM /RL HIGHEST /F"
                  Before="RegisterSelfHealTask" Sequence="execute" />
     <CustomAction Id="RegisterSelfHealTask" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec"
                   Execute="deferred" Return="ignore" Impersonate="no" />
