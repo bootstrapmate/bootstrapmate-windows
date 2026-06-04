@@ -8,8 +8,14 @@ public static class BootstrapMateConstants
     /// <summary>Registry path where Intune CSP / Group Policy writes managed settings.</summary>
     public const string PolicyRegistryPath = @"SOFTWARE\Policies\BootstrapMate";
 
+    /// <summary>Registry path for machine-level settings (written by MSI / sysadmins). Highest non-policy fallback for SYSTEM-context runs.</summary>
+    public const string MachineSettingsRegistryPath = @"SOFTWARE\BootstrapMate\Settings";
+
     /// <summary>Registry path for user-configured settings (written by the GUI app).</summary>
     public const string SettingsRegistryPath = @"SOFTWARE\BootstrapMate\Settings";
+
+    /// <summary>Canonical fallback manifest URL — used when neither CLI, policy, machine, nor user settings supply one.</summary>
+    public const string DefaultManifestUrl = "https://cimiancloudstorage.blob.core.windows.net/public/bootstrap/management.json";
 
     /// <summary>Registry path for status tracking.</summary>
     public const string StatusRegistryPath = @"SOFTWARE\Cimian\BootstrapMate\Status";

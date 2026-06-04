@@ -60,16 +60,44 @@
       <RegistryValue Root="HKLM" Key="SOFTWARE\BootstrapMate" Name="LastRunVersion" Value="$(var.ProductVersion)" Type="string" />
     </Component>
 
-    <!-- Post-install: run installapplications.exe (ManifestUrl comes from CSP policy) -->
+    <!-- Machine-level fallback settings: ConfigManager reads HKLM\SOFTWARE\BootstrapMate\Settings
+         when no CSP policy is present. CSP at HKLM\SOFTWARE\Policies\BootstrapMate still overrides. -->
+    <Component Id="MachineSettings" Directory="INSTALLDIR" Guid="C1F2B3A4-D5E6-4789-9012-A1B2C3D4E5F6">
+      <RegistryValue Root="HKLM" Key="SOFTWARE\BootstrapMate\Settings" Name="ManifestUrl"
+                     Value="https://cimiancloudstorage.blob.core.windows.net/public/bootstrap/management.json"
+                     Type="string" KeyPath="yes" />
+    </Component>
+
+    <!-- Post-install: run installapplications.exe.
+         --force ensures fresh download (cache cleared) so every MSI update reprocesses the manifest.
+         --no-dialog keeps the install silent under Intune. ManifestUrl is resolved by ConfigManager
+         from CSP > HKLM Settings > HKCU > baked-in default. -->
     <CustomAction Id="RunBootstrapMate"
                   FileRef="BootstrapMateExe"
-                  ExeCommand=""
+                  ExeCommand="--force --no-dialog"
                   Impersonate="no"
                   Execute="deferred"
                   Return="asyncNoWait" />
 
+    <!-- Daily self-healing: register a scheduled task that re-runs installapplications.exe as
+         SYSTEM with no args (picks up CSP / HKLM Settings / default URL). Runs daily at 03:00,
+         missed schedules run at next logon. Inline schtasks call avoids needing an external XML. -->
+    <SetProperty Id="RegisterSelfHealTask"
+                 Value="&quot;[System64Folder]schtasks.exe&quot; /Create /TN &quot;BootstrapMate Self-Heal&quot; /TR &quot;\&quot;[INSTALLDIR]installapplications.exe\&quot; --silent&quot; /SC DAILY /ST 03:00 /RU SYSTEM /RL HIGHEST /F"
+                 Before="RegisterSelfHealTask" Sequence="execute" />
+    <CustomAction Id="RegisterSelfHealTask" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec"
+                  Execute="deferred" Return="ignore" Impersonate="no" />
+
+    <SetProperty Id="UnregisterSelfHealTask"
+                 Value="&quot;[System64Folder]schtasks.exe&quot; /Delete /TN &quot;BootstrapMate Self-Heal&quot; /F"
+                 Before="UnregisterSelfHealTask" Sequence="execute" />
+    <CustomAction Id="UnregisterSelfHealTask" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec"
+                  Execute="deferred" Return="ignore" Impersonate="no" />
+
     <InstallExecuteSequence>
       <Custom Action="RunBootstrapMate" Before="InstallFinalize" Condition="NOT REMOVE" />
+      <Custom Action="RegisterSelfHealTask" After="InstallFiles" Condition="NOT REMOVE" />
+      <Custom Action="UnregisterSelfHealTask" Before="RemoveFiles" Condition="REMOVE=&quot;ALL&quot;" />
     </InstallExecuteSequence>
 
     <!-- Environment Variable Component -->
@@ -97,6 +125,7 @@
       <ComponentRef Id="BootstrapMateExecutable" />
       <ComponentGroupRef Id="GuiAppFiles" />
       <ComponentRef Id="RegistryEntries" />
+      <ComponentRef Id="MachineSettings" />
       <ComponentRef Id="SetPathComponent" />
       <ComponentRef Id="StartMenuShortcut" />
     </Feature>
