@@ -6,8 +6,9 @@ namespace BootstrapMate.Core;
 /// Configuration loader with fallback chain (highest → lowest priority):
 ///   1. CLI arguments
 ///   2. Intune CSP / Group Policy (HKLM\SOFTWARE\Policies\BootstrapMate)
-///   3. User-configured settings (HKLM\SOFTWARE\BootstrapMate\Settings)
-///   4. Default values
+///   3. Machine settings (HKLM\SOFTWARE\BootstrapMate\Settings) — written by MSI / sysadmins
+///   4. User settings (HKCU\SOFTWARE\BootstrapMate\Settings) — written by the GUI app
+///   5. DefaultManifestUrl baked into the binary
 ///
 /// Mirrors macOS ConfigManager for cross-platform parity.
 /// </summary>
@@ -151,10 +152,17 @@ public sealed class ConfigManager
     {
         var policy = PolicyDetector.Instance;
 
-        // Load from user settings first (lower priority)
-        LoadFromUserRegistry();
+        // Lowest priority first: baked-in default → HKCU user → HKLM machine → CSP policy.
+        // Higher-priority sources overwrite earlier ones; CLI runs last from caller.
+        if (string.IsNullOrWhiteSpace(Config.ManifestUrl) &&
+            !string.IsNullOrWhiteSpace(BootstrapMateConstants.DefaultManifestUrl))
+        {
+            Config.ManifestUrl = BootstrapMateConstants.DefaultManifestUrl;
+            ManifestUrlSource = ConfigSource.Default;
+        }
 
-        // Policy overrides user settings
+        LoadFromUserRegistry();
+        LoadFromMachineRegistry();
         LoadFromPolicy(policy);
     }
 
@@ -211,15 +219,32 @@ public sealed class ConfigManager
 
     private void LoadFromUserRegistry()
     {
+        LoadFromHive(RegistryHive.CurrentUser, ConfigSource.UserSettings);
+    }
+
+    private void LoadFromMachineRegistry()
+    {
+        // HKLM\SOFTWARE\BootstrapMate\Settings — read from both registry views so
+        // a 32-bit MSI write is visible to the 64-bit binary and vice-versa.
+        LoadFromHive(RegistryHive.LocalMachine, ConfigSource.UserSettings, RegistryView.Registry64);
+        LoadFromHive(RegistryHive.LocalMachine, ConfigSource.UserSettings, RegistryView.Registry32);
+    }
+
+    private void LoadFromHive(RegistryHive hive, ConfigSource source, RegistryView view = RegistryView.Default)
+    {
         try
         {
-            using var baseKey = RegistryKey.OpenBaseKey(RegistryHive.CurrentUser, RegistryView.Default);
-            using var settingsKey = baseKey.OpenSubKey(BootstrapMateConstants.SettingsRegistryPath);
+            using var baseKey = RegistryKey.OpenBaseKey(hive, view);
+            using var settingsKey = baseKey.OpenSubKey(BootstrapMateConstants.MachineSettingsRegistryPath);
             if (settingsKey is null) return;
 
-            Config.ManifestUrl = ReadString(settingsKey, "ManifestUrl") ?? Config.ManifestUrl;
-            if (!string.IsNullOrWhiteSpace(Config.ManifestUrl) && ManifestUrlSource == ConfigSource.Default)
-                ManifestUrlSource = ConfigSource.UserSettings;
+            var url = ReadString(settingsKey, "ManifestUrl");
+            if (!string.IsNullOrWhiteSpace(url))
+            {
+                Config.ManifestUrl = url;
+                if (ManifestUrlSource == ConfigSource.Default)
+                    ManifestUrlSource = source;
+            }
 
             Config.AuthorizationHeader = ReadString(settingsKey, "AuthorizationHeader") ?? Config.AuthorizationHeader;
             Config.FollowRedirects = ReadBool(settingsKey, "FollowRedirects") ?? Config.FollowRedirects;
@@ -238,7 +263,7 @@ public sealed class ConfigManager
         }
         catch
         {
-            // Registry unavailable — use defaults
+            // Registry unavailable — fall through to defaults / next source
         }
     }
 
