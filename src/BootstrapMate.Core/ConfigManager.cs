@@ -49,7 +49,9 @@ public sealed class ConfigManager
         bool? noDialog = null,
         string? dialogTitle = null,
         string? dialogMessage = null,
-        int? networkTimeout = null)
+        int? networkTimeout = null,
+        string? reportingUrl = null,
+        string? reportingHeader = null)
     {
         if (!string.IsNullOrWhiteSpace(manifestUrl))
         {
@@ -76,6 +78,10 @@ public sealed class ConfigManager
             Config.DialogMessage = dialogMessage;
         if (networkTimeout.HasValue)
             Config.NetworkTimeout = networkTimeout.Value;
+        if (!string.IsNullOrWhiteSpace(reportingUrl))
+            Config.ReportingUrl = reportingUrl;
+        if (!string.IsNullOrWhiteSpace(reportingHeader))
+            Config.ReportingHeader = reportingHeader;
     }
 
     /// <summary>Get the effective manifest URL from whatever source is active.</summary>
@@ -144,6 +150,8 @@ public sealed class ConfigManager
         WriteBool("BlurScreen", settings.BlurScreen);
         WriteString("CustomInstallPath", settings.CustomInstallPath);
         WriteInt("NetworkTimeout", settings.NetworkTimeout);
+        WriteString("ReportingUrl", settings.ReportingUrl);
+        WriteString("ReportingHeader", settings.ReportingHeader);
     }
 
     // ── Private ──────────────────────────────────────────────────────
@@ -215,6 +223,12 @@ public sealed class ConfigManager
 
         if (policy.GetManagedInt("NetworkTimeout") is { } timeout)
             Config.NetworkTimeout = timeout;
+
+        if (policy.GetManagedString("ReportingUrl") is { Length: > 0 } reportingUrl)
+            Config.ReportingUrl = reportingUrl;
+
+        if (policy.GetManagedString("ReportingHeader") is { Length: > 0 } reportingHeader)
+            Config.ReportingHeader = reportingHeader;
     }
 
     private void LoadFromUserRegistry()
@@ -260,6 +274,8 @@ public sealed class ConfigManager
             Config.BlurScreen = ReadBool(settingsKey, "BlurScreen") ?? Config.BlurScreen;
             Config.CustomInstallPath = ReadString(settingsKey, "CustomInstallPath") ?? Config.CustomInstallPath;
             Config.NetworkTimeout = ReadInt(settingsKey, "NetworkTimeout") ?? Config.NetworkTimeout;
+            Config.ReportingUrl = ReadString(settingsKey, "ReportingUrl") ?? Config.ReportingUrl;
+            Config.ReportingHeader = ReadString(settingsKey, "ReportingHeader") ?? Config.ReportingHeader;
         }
         catch
         {

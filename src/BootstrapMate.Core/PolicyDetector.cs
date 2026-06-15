@@ -35,6 +35,8 @@ public sealed class PolicyDetector
         ["BlurScreen"]          = ["BlurScreen"],
         ["CustomInstallPath"]   = ["CustomInstallPath", "InstallPath", "iapath"],
         ["NetworkTimeout"]      = ["NetworkTimeout"],
+        ["ReportingUrl"]        = ["ReportingUrl", "ReportURL", "reportingUrl"],
+        ["ReportingHeader"]     = ["ReportingHeader", "ReportingAuthorizationHeader"],
     };
 
     private PolicyDetector() { }

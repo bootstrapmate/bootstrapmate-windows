@@ -25,6 +25,10 @@ public sealed class BootstrapMateConfig
     public bool BlurScreen { get; set; }
     public bool NoDialog { get; set; }
 
+    // Reporting: vendor-neutral run-summary POST
+    public string? ReportingUrl { get; set; }
+    public string? ReportingHeader { get; set; }
+
     // Advanced
     public string? CustomInstallPath { get; set; }
     public int NetworkTimeout { get; set; } = BootstrapMateConstants.DefaultNetworkTimeout;

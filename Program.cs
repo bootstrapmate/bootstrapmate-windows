@@ -620,6 +620,9 @@ namespace BootstrapMate
         
         static async Task<int> ProcessManifest(string manifestUrl, bool forceDownload = false, bool noDialog = false, bool blurScreen = false, string dialogTitle = "Setting Up Your Device", string dialogMessage = "Please wait while we install required software...")
         {
+            // Captured before the try so both the success and failure paths can
+            // report an accurate duration.
+            DateTime runStartUtc = DateTime.UtcNow;
             try
             {
                 // Suppress system sounds for silent installation experience
@@ -765,7 +768,10 @@ namespace BootstrapMate
                 
                 // Restore system sounds before completion
                 RestoreSystemSounds();
-                
+
+                // Post a vendor-neutral run summary to the optional reporting endpoint.
+                await ReportManager.SendRunSummaryAsync(true, runStartUtc, Version);
+
                 return 0;
             }
             catch (Exception ex)
@@ -805,7 +811,10 @@ namespace BootstrapMate
                 {
                     // Don't let status update failures mask the original error
                 }
-                
+
+                // Report the failed run too, so the fleet view reflects failures.
+                await ReportManager.SendRunSummaryAsync(false, runStartUtc, Version);
+
                 return 1;
             }
         }
