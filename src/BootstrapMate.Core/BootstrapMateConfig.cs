@@ -25,6 +25,11 @@ public sealed class BootstrapMateConfig
     public bool BlurScreen { get; set; }
     public bool NoDialog { get; set; }
 
+    // Security: installer signature verification
+    public bool VerifyPackageSignatures { get; set; } = true;
+    public string? ExpectedPublisher { get; set; }
+    public bool AllowUnsigned { get; set; }
+
     // Advanced
     public string? CustomInstallPath { get; set; }
     public int NetworkTimeout { get; set; } = BootstrapMateConstants.DefaultNetworkTimeout;

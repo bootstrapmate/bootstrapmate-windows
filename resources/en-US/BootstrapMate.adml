@@ -20,6 +20,7 @@
       <string id="Cat_Behavior">Behavior</string>
       <string id="Cat_Dialog">Dialog</string>
       <string id="Cat_Advanced">Advanced</string>
+      <string id="Cat_Security">Security</string>
 
       <!-- Connection -->
       <string id="ManifestUrl">Manifest URL</string>
@@ -99,6 +100,24 @@ Default: C:\Program Files\BootstrapMate</string>
 
 Range: 10–600 seconds
 Default: 120 seconds</string>
+
+      <!-- Security -->
+      <string id="VerifyPackageSignatures">Verify package signatures</string>
+      <string id="VerifyPackageSignatures_Help">Verify the Authenticode signature of MSI/EXE installers before running them elevated. The download only proves where bytes came from, not who produced them.
+
+When Enabled (or not configured), installers must carry a signature trusted by Windows. When Disabled, signature verification is skipped (NOT recommended).
+
+Default: Enabled</string>
+
+      <string id="ExpectedPublisher">Expected publisher</string>
+      <string id="ExpectedPublisher_Help">Require MSI/EXE installers to be signed by a certificate whose common name (or subject) contains this value (e.g. your organization name).
+
+When empty, any signature trusted by Windows is accepted. A publisher mismatch is always refused, even when "Allow unsigned packages" is enabled.</string>
+
+      <string id="AllowUnsigned">Allow unsigned packages</string>
+      <string id="AllowUnsigned_Help">Permit unsigned or untrusted MSI/EXE installers to run (logged as a warning). A publisher mismatch is never bypassed by this setting.
+
+Default: Disabled</string>
     </stringTable>
 
     <presentationTable>
@@ -140,6 +159,12 @@ Default: 120 seconds</string>
 
       <presentation id="NetworkTimeout">
         <decimalTextBox refId="NetworkTimeout_Value" defaultValue="120">Timeout (seconds):</decimalTextBox>
+      </presentation>
+
+      <presentation id="ExpectedPublisher">
+        <textBox refId="ExpectedPublisher_Value">
+          <label>Expected publisher:</label>
+        </textBox>
       </presentation>
     </presentationTable>
   </resources>
