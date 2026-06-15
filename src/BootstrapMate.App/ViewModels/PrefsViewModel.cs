@@ -6,7 +6,7 @@ namespace BootstrapMate.App.ViewModels;
 
 /// <summary>
 /// ViewModel for the Prefs tab. Mirrors macOS SettingsViewModel.
-/// Loads from ConfigManager, saves non-policy settings via elevated CLI, shows policy lock state.
+/// Loads from ConfigManager, saves non-managed settings via elevated CLI, shows management lock state.
 /// </summary>
 public partial class PrefsViewModel : ObservableObject
 {
@@ -64,11 +64,11 @@ public partial class PrefsViewModel : ObservableObject
         OnPropertyChanged(nameof(IsSaveEnabled));
     }
 
-    // ── Policy State ─────────────────────────────────────────────
+    // ── Management State ─────────────────────────────────────────────
 
     private HashSet<string> _managedKeys = [];
 
-    public bool IsPolicyManaged(string key) => _managedKeys.Contains(key);
+    public bool IsManaged(string key) => _managedKeys.Contains(key);
 
     // ── Binding-Friendly Display Properties ──────────────────────
 
@@ -137,7 +137,7 @@ public partial class PrefsViewModel : ObservableObject
         configMgr.ReloadSettings();
         var config = configMgr.Config;
 
-        _managedKeys = PolicyDetector.Instance.AllManagedKeys();
+        _managedKeys = ManagementDetector.Instance.AllManagedKeys();
 
         ManifestUrl = config.ManifestUrl ?? "";
         HasExistingAuth = !string.IsNullOrEmpty(config.AuthorizationHeader);
@@ -155,7 +155,7 @@ public partial class PrefsViewModel : ObservableObject
         CustomInstallPath = config.CustomInstallPath ?? "";
         NetworkTimeout = config.NetworkTimeout;
 
-        // Notify all bindings (policy locks, computed display properties)
+        // Notify all bindings (management locks, computed display properties)
         OnPropertyChanged(string.Empty);
 
         _isLoading = false;

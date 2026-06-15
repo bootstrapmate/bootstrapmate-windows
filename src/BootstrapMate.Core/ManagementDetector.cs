@@ -4,19 +4,19 @@ namespace BootstrapMate.Core;
 
 /// <summary>
 /// Detects which settings are managed by Intune CSP / Group Policy.
-/// Windows equivalent of macOS MDMDetector — checks HKLM\SOFTWARE\Policies\BootstrapMate.
+/// Windows equivalent of macOS ManagementDetector — checks HKLM\SOFTWARE\Policies\BootstrapMate.
 ///
 /// Intune writes here via OMA-URI:
 ///   ./Device/Vendor/MSFT/Policy/Config/BootstrapMate~Policy~BootstrapMate/{KeyName}
 /// Group Policy writes here via ADMX-backed policies.
 /// </summary>
-public sealed class PolicyDetector
+public sealed class ManagementDetector
 {
-    public static PolicyDetector Instance { get; } = new();
+    public static ManagementDetector Instance { get; } = new();
 
     /// <summary>
     /// Known key aliases — maps canonical key to all variant names that may appear in policy.
-    /// Mirrors macOS MDMDetector.keyAliases for consistent admin experience.
+    /// Mirrors macOS ManagementDetector.keyAliases for consistent admin experience.
     /// </summary>
     private static readonly Dictionary<string, string[]> KeyAliases = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -37,27 +37,27 @@ public sealed class PolicyDetector
         ["NetworkTimeout"]      = ["NetworkTimeout"],
     };
 
-    private PolicyDetector() { }
+    private ManagementDetector() { }
 
     /// <summary>Returns true if the canonical key is present in the Policies registry hive.</summary>
-    public bool IsManagedByPolicy(string canonicalKey)
+    public bool IsManaged(string canonicalKey)
     {
         var aliases = GetAliases(canonicalKey);
         return FindRegistryValue(aliases) is not null;
     }
 
-    /// <summary>Returns the policy-managed value for a canonical key, or null.</summary>
+    /// <summary>Returns the managed value for a canonical key, or null.</summary>
     public object? GetManagedValue(string canonicalKey)
     {
         var aliases = GetAliases(canonicalKey);
         return FindRegistryValue(aliases);
     }
 
-    /// <summary>Returns a string policy value, or null.</summary>
+    /// <summary>Returns a string value, or null.</summary>
     public string? GetManagedString(string canonicalKey)
         => GetManagedValue(canonicalKey)?.ToString();
 
-    /// <summary>Returns a bool policy value, or null. Reads DWORD 0/1.</summary>
+    /// <summary>Returns a bool value, or null. Reads DWORD 0/1.</summary>
     public bool? GetManagedBool(string canonicalKey)
     {
         var value = GetManagedValue(canonicalKey);
@@ -70,7 +70,7 @@ public sealed class PolicyDetector
         };
     }
 
-    /// <summary>Returns an int policy value, or null.</summary>
+    /// <summary>Returns an int value, or null.</summary>
     public int? GetManagedInt(string canonicalKey)
     {
         var value = GetManagedValue(canonicalKey);
@@ -82,7 +82,7 @@ public sealed class PolicyDetector
         };
     }
 
-    /// <summary>Returns the set of canonical keys that are currently policy-managed.</summary>
+    /// <summary>Returns the set of canonical keys that are currently managed.</summary>
     public HashSet<string> AllManagedKeys()
     {
         var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
