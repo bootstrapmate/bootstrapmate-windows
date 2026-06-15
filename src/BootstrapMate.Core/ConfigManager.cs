@@ -102,9 +102,9 @@ public sealed class ConfigManager
     }
 
     /// <summary>
-    /// Save user-configured settings to HKLM\SOFTWARE\BootstrapMate\Settings.
-    /// Skips any key that is already policy-managed.
-    /// Requires elevation.
+    /// Save user-configured settings to HKCU\SOFTWARE\BootstrapMate\Settings.
+    /// Skips any key that is already managed (set via Group Policy / Intune).
+    /// Writes to the current user's hive, so no elevation is required.
     /// </summary>
     public static void SaveUserSettings(BootstrapMateConfig settings)
     {

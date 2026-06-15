@@ -6,7 +6,7 @@ namespace BootstrapMate.App.ViewModels;
 
 /// <summary>
 /// ViewModel for the Prefs tab. Mirrors macOS SettingsViewModel.
-/// Loads from ConfigManager, saves non-managed settings via elevated CLI, shows management lock state.
+/// Loads from ConfigManager, saves non-managed settings to the user registry (HKCU), shows management lock state.
 /// </summary>
 public partial class PrefsViewModel : ObservableObject
 {
