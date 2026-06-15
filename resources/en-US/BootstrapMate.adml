@@ -107,7 +107,7 @@ Default: 120 seconds</string>
 
 The payload includes the run ID, version, success, duration, architecture, hostname, serial number, manifest URL, and per-phase outcomes. Any endpoint that accepts a JSON POST can consume it.
 
-Leave empty to disable reporting. The POST is best-effort and never blocks or fails the run.</string>
+Leave empty to disable reporting. The POST is best-effort: it is bounded by a short timeout and never fails the run (a slow or unreachable endpoint can delay completion by up to that timeout).</string>
 
       <string id="ReportingHeader">Reporting Authorization Header</string>
       <string id="ReportingHeader_Help">Optional Authorization header value sent with the reporting POST request.

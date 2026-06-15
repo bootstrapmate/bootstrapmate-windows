@@ -25,7 +25,7 @@ namespace BootstrapMate
         /// Build and POST the run summary to the configured reporting endpoint, if any.
         /// Best-effort: failures are logged and never abort the run.
         /// </summary>
-        public static async Task SendRunSummaryAsync(bool success, DateTime startTimeUtc, string version)
+        public static async Task SendRunSummaryAsync(bool success, DateTime startTimeUtc, string version, string manifestUrl)
         {
             var config = ConfigManager.Instance.Config;
             var url = config.ReportingUrl;
@@ -34,10 +34,12 @@ namespace BootstrapMate
 
             try
             {
-                var payload = BuildPayload(success, startTimeUtc, DateTime.UtcNow, version, config.ManifestUrl ?? "");
+                // Use the manifest URL actually used for this run (which may come
+                // from --url), not whatever happens to be in config.
+                var payload = BuildPayload(success, startTimeUtc, DateTime.UtcNow, version, manifestUrl);
                 var json = JsonSerializer.Serialize(payload);
 
-                using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+                using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
                 httpClient.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", $"BootstrapMate/{version}");
                 if (!string.IsNullOrWhiteSpace(config.ReportingHeader))
                     httpClient.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", config.ReportingHeader);
@@ -99,7 +101,13 @@ namespace BootstrapMate
         }
 
         private static string CurrentArchitecture()
-            => RuntimeInformation.OSArchitecture == Architecture.Arm64 ? "ARM64" : "X64";
+            => RuntimeInformation.OSArchitecture switch
+            {
+                Architecture.Arm64 => "ARM64",
+                Architecture.X64 => "X64",
+                Architecture.X86 => "X86",
+                var other => other.ToString().ToUpperInvariant()
+            };
 
         /// <summary>Best-effort hardware serial number from the SMBIOS registry key.</summary>
         private static string? SerialNumber()

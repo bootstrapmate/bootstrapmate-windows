@@ -45,7 +45,7 @@ Configure via Intune CSP / Group Policy (the bundled ADMX), the machine/user reg
 | `ReportingUrl` | string | Endpoint to POST the run summary to. When unset, no report is sent. |
 | `ReportingHeader` | string | Optional `Authorization` header value sent with the POST. |
 
-The POST is best-effort: failures are logged and never block or fail the run. Payload fields include `tool`, `platform`, `version`, `runId`, `success`, `startTime`/`endTime`, `durationSeconds`, `architecture`, `hostname`, `serialNumber`, `manifestUrl`, and per-phase outcomes.
+The POST is best-effort: it is bounded by a short timeout and never fails the run (a slow or unreachable endpoint can delay completion by up to that timeout). Payload fields include `tool`, `platform`, `version`, `runId`, `success`, `startTime`/`endTime`, `durationSeconds`, `architecture`, `hostname`, `serialNumber`, `manifestUrl`, and per-phase outcomes.
 
 ## Quick Start
 

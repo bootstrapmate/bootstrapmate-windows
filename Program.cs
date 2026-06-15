@@ -770,7 +770,7 @@ namespace BootstrapMate
                 RestoreSystemSounds();
 
                 // Post a vendor-neutral run summary to the optional reporting endpoint.
-                await ReportManager.SendRunSummaryAsync(true, runStartUtc, Version);
+                await ReportManager.SendRunSummaryAsync(true, runStartUtc, Version, manifestUrl);
 
                 return 0;
             }
@@ -813,7 +813,7 @@ namespace BootstrapMate
                 }
 
                 // Report the failed run too, so the fleet view reflects failures.
-                await ReportManager.SendRunSummaryAsync(false, runStartUtc, Version);
+                await ReportManager.SendRunSummaryAsync(false, runStartUtc, Version, manifestUrl);
 
                 return 1;
             }
