@@ -115,6 +115,12 @@ public static class SignatureVerifier
         new("00AAC56B-CD44-11d0-8CC2-00C04FC295EE");
 
     private const uint WTD_UI_NONE = 2;
+    // Revocation checking is intentionally left off (WTD_REVOKE_NONE). BootstrapMate
+    // runs during OOBE / the Autopilot ESP, where networking is often unavailable or
+    // unreliable; an online OCSP/CRL check would add latency and could hard-fail an
+    // otherwise-valid installer when the revocation endpoint is unreachable. The trust
+    // chain to a trusted root is still verified. If your environment needs revocation,
+    // switch this to WTD_REVOKE_WHOLECHAIN.
     private const uint WTD_REVOKE_NONE = 0;
     private const uint WTD_CHOICE_FILE = 1;
     private const uint WTD_STATEACTION_VERIFY = 1;

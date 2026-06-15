@@ -1040,7 +1040,7 @@ namespace BootstrapMate
                 throw new Exception($"Refusing to install {Path.GetFileName(filePath)}: signature verification failed");
             }
 
-            switch (type.ToLower())
+            switch (type.ToLowerInvariant())
             {
                 case "powershell":
                 case "ps1":
