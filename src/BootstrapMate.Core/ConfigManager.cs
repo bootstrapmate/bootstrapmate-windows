@@ -228,13 +228,13 @@ public sealed class ConfigManager
         if (management.GetManagedInt("NetworkTimeout") is { } timeout)
             Config.NetworkTimeout = timeout;
 
-        if (policy.GetManagedBool("VerifyPackageSignatures") is { } verifySig)
+        if (management.GetManagedBool("VerifyPackageSignatures") is { } verifySig)
             Config.VerifyPackageSignatures = verifySig;
 
-        if (policy.GetManagedString("ExpectedPublisher") is { Length: > 0 } publisher)
+        if (management.GetManagedString("ExpectedPublisher") is { Length: > 0 } publisher)
             Config.ExpectedPublisher = publisher;
 
-        if (policy.GetManagedBool("AllowUnsigned") is { } allowUnsigned)
+        if (management.GetManagedBool("AllowUnsigned") is { } allowUnsigned)
             Config.AllowUnsigned = allowUnsigned;
     }
 
