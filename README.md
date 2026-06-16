@@ -34,6 +34,24 @@ Before building, set up your environment variables:
 
 3. **Install your code signing certificate** in the Current User certificate store
 
+## Security: package signature verification
+
+Before any MSI or EXE installer is executed elevated, BootstrapMate verifies its Authenticode signature with `WinVerifyTrust`. A successful download only proves where the bytes came from — not who produced them. The signature gate ensures an installer carries a signature that chains to a trusted root (and, when configured, matches an expected publisher) before it runs as an elevated process.
+
+Behaviour is controlled via Intune CSP / Group Policy (the bundled ADMX), the machine/user registry, or per-item manifest fields.
+
+Policy / registry keys (`HKLM\SOFTWARE\Policies\BootstrapMate` for policy; `HKLM\SOFTWARE\BootstrapMate\Settings` for machine settings):
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `VerifyPackageSignatures` | DWORD | `1` | Verify every MSI/EXE installer before running it. |
+| `ExpectedPublisher` | string | _unset_ | Require installers to be signed by a certificate whose common name/subject contains this value. When unset, any Windows-trusted signature is accepted. |
+| `AllowUnsigned` | DWORD | `0` | Permit unsigned/untrusted installers (logged as a warning). A publisher *mismatch* is never bypassed, even with this set. |
+
+Per-item manifest overrides (fall back to the global config): `expectedPublisher`, `allowUnsigned`.
+
+Only `msi` and `exe` items are Authenticode-gated; `nupkg`/`pkg`/`ps1` items continue to rely on their existing handling.
+
 ## Quick Start
 
 ```powershell

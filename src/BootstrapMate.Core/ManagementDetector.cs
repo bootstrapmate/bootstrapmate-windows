@@ -35,6 +35,9 @@ public sealed class ManagementDetector
         ["BlurScreen"]          = ["BlurScreen"],
         ["CustomInstallPath"]   = ["CustomInstallPath", "InstallPath", "iapath"],
         ["NetworkTimeout"]      = ["NetworkTimeout"],
+        ["VerifyPackageSignatures"] = ["VerifyPackageSignatures", "VerifySignatures"],
+        ["ExpectedPublisher"]   = ["ExpectedPublisher", "Publisher"],
+        ["AllowUnsigned"]       = ["AllowUnsigned"],
     };
 
     private ManagementDetector() { }
