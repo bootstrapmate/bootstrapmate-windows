@@ -1040,8 +1040,16 @@ namespace BootstrapMate
         static async Task InstallPackage(string filePath, string type, JsonElement packageInfo)
         {
             Logger.Debug($"Installing package: {filePath} (Type: {type})");
-            
-            switch (type.ToLower())
+
+            // Provenance gate for binary installers that run elevated. The download
+            // only proves where the bytes came from, not who produced them; verify
+            // the Authenticode signature before executing as an elevated process.
+            if (!VerifyInstallerSignature(filePath, type, packageInfo))
+            {
+                throw new Exception($"Refusing to install {Path.GetFileName(filePath)}: signature verification failed");
+            }
+
+            switch (type.ToLowerInvariant())
             {
                 case "powershell":
                 case "ps1":
@@ -1099,6 +1107,53 @@ namespace BootstrapMate
                     Logger.WriteWarning($"Unknown package type: {type}");
                     throw new Exception($"Unsupported package type: {type}. Supported types are: msi, exe, ps1, nupkg, pkg");
             }
+        }
+
+        /// <summary>
+        /// Verify the Authenticode signature of a binary installer (msi/exe) before
+        /// it runs elevated. Returns true when the install may proceed.
+        ///
+        /// Only msi/exe are gated — those are PE/MSI files Authenticode can validate.
+        /// Per-item manifest fields (expectedPublisher, allowUnsigned) override the
+        /// global managed config.
+        /// </summary>
+        static bool VerifyInstallerSignature(string filePath, string type, JsonElement packageInfo)
+        {
+            var config = ConfigManager.Instance.Config;
+            if (!config.VerifyPackageSignatures)
+                return true;
+
+            string normalizedType = type.ToLowerInvariant();
+            if (normalizedType != "msi" && normalizedType != "exe")
+                return true; // nupkg/pkg/ps1 are not Authenticode-gated here
+
+            string? expectedPublisher = config.ExpectedPublisher;
+            if (packageInfo.TryGetProperty("expectedPublisher", out var pubProp) &&
+                pubProp.ValueKind == JsonValueKind.String &&
+                !string.IsNullOrWhiteSpace(pubProp.GetString()))
+            {
+                expectedPublisher = pubProp.GetString();
+            }
+
+            bool allowUnsigned = config.AllowUnsigned;
+            if (packageInfo.TryGetProperty("allowUnsigned", out var allowProp) &&
+                (allowProp.ValueKind == JsonValueKind.True || allowProp.ValueKind == JsonValueKind.False))
+            {
+                allowUnsigned = allowProp.GetBoolean();
+            }
+
+            var result = SignatureVerifier.VerifyFile(filePath, expectedPublisher);
+            var (decision, reason) = SignatureVerifier.Decide(result, allowUnsigned);
+
+            if (decision == SignatureVerifier.Decision.Allow)
+            {
+                Logger.Debug($"Signature check passed for {Path.GetFileName(filePath)}: {reason}");
+                return true;
+            }
+
+            Logger.Error($"Signature check failed for {Path.GetFileName(filePath)}: {reason}");
+            Logger.WriteWarning($"Refusing to install {Path.GetFileName(filePath)} — {reason}");
+            return false;
         }
         
         static async Task RunPowerShellScript(string scriptPath, JsonElement packageInfo)

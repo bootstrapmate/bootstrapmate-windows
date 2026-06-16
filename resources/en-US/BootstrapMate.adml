@@ -21,6 +21,7 @@
       <string id="Cat_Dialog">Dialog</string>
       <string id="Cat_Advanced">Advanced</string>
       <string id="Cat_Reporting">Reporting</string>
+      <string id="Cat_Security">Security</string>
 
       <!-- Connection -->
       <string id="ManifestUrl">Manifest URL</string>
@@ -115,6 +116,23 @@ Leave empty to disable reporting. The POST is best-effort: it is bounded by a sh
 Example: Bearer eyJhbGciOiJIUzI1NiIs...
 
 Leave empty if your reporting endpoint does not require authentication.</string>
+      <!-- Security -->
+      <string id="VerifyPackageSignatures">Verify package signatures</string>
+      <string id="VerifyPackageSignatures_Help">Verify the Authenticode signature of MSI/EXE installers before running them elevated. The download only proves where bytes came from, not who produced them.
+
+When Enabled (or not configured), installers must carry a signature trusted by Windows. When Disabled, signature verification is skipped (NOT recommended).
+
+Default: Enabled</string>
+
+      <string id="ExpectedPublisher">Expected publisher</string>
+      <string id="ExpectedPublisher_Help">Require MSI/EXE installers to be signed by a certificate whose common name (or subject) contains this value (e.g. your organization name).
+
+When empty, any signature trusted by Windows is accepted. A publisher mismatch is always refused, even when "Allow unsigned packages" is enabled.</string>
+
+      <string id="AllowUnsigned">Allow unsigned packages</string>
+      <string id="AllowUnsigned_Help">Permit unsigned or untrusted MSI/EXE installers to run (logged as a warning). A publisher mismatch is never bypassed by this setting.
+
+Default: Disabled</string>
     </stringTable>
 
     <presentationTable>
@@ -167,6 +185,9 @@ Leave empty if your reporting endpoint does not require authentication.</string>
       <presentation id="ReportingHeader">
         <textBox refId="ReportingHeader_Value">
           <label>Authorization Header:</label>
+      <presentation id="ExpectedPublisher">
+        <textBox refId="ExpectedPublisher_Value">
+          <label>Expected publisher:</label>
         </textBox>
       </presentation>
     </presentationTable>

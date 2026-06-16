@@ -24,14 +24,14 @@ public sealed class ConfigManager
 
     private ConfigManager()
     {
-        LoadPolicyAndUserSettings();
+        LoadManagementAndUserSettings();
     }
 
     public enum ConfigSource
     {
         Default,
         UserSettings,
-        Policy,
+        Management,
         CliArgument
     }
 
@@ -51,7 +51,10 @@ public sealed class ConfigManager
         string? dialogMessage = null,
         int? networkTimeout = null,
         string? reportingUrl = null,
-        string? reportingHeader = null)
+        string? reportingHeader = null,
+        bool? verifyPackageSignatures = null,
+        string? expectedPublisher = null,
+        bool? allowUnsigned = null)
     {
         if (!string.IsNullOrWhiteSpace(manifestUrl))
         {
@@ -82,6 +85,12 @@ public sealed class ConfigManager
             Config.ReportingUrl = reportingUrl;
         if (!string.IsNullOrWhiteSpace(reportingHeader))
             Config.ReportingHeader = reportingHeader;
+        if (verifyPackageSignatures.HasValue)
+            Config.VerifyPackageSignatures = verifyPackageSignatures.Value;
+        if (!string.IsNullOrWhiteSpace(expectedPublisher))
+            Config.ExpectedPublisher = expectedPublisher;
+        if (allowUnsigned.HasValue)
+            Config.AllowUnsigned = allowUnsigned.Value;
     }
 
     /// <summary>Get the effective manifest URL from whatever source is active.</summary>
@@ -95,7 +104,7 @@ public sealed class ConfigManager
     public bool IsValid() => !string.IsNullOrWhiteSpace(Config.ManifestUrl);
 
     /// <summary>
-    /// Reload settings from policy + user registry. Call when waiting for
+    /// Reload settings from management + user registry. Call when waiting for
     /// Intune policy to land post-enrollment.
     /// Returns true if a valid manifest URL was found.
     /// </summary>
@@ -103,34 +112,34 @@ public sealed class ConfigManager
     {
         Config.ManifestUrl = null;
         ManifestUrlSource = ConfigSource.Default;
-        LoadPolicyAndUserSettings();
+        LoadManagementAndUserSettings();
         return IsValid();
     }
 
     /// <summary>
-    /// Save user-configured settings to HKLM\SOFTWARE\BootstrapMate\Settings.
-    /// Skips any key that is already policy-managed.
-    /// Requires elevation.
+    /// Save user-configured settings to HKCU\SOFTWARE\BootstrapMate\Settings.
+    /// Skips any key that is already managed (set via Group Policy / Intune).
+    /// Writes to the current user's hive, so no elevation is required.
     /// </summary>
     public static void SaveUserSettings(BootstrapMateConfig settings)
     {
-        var policy = PolicyDetector.Instance;
+        var management = ManagementDetector.Instance;
 
         void WriteString(string key, string? value)
         {
-            if (policy.IsManagedByPolicy(key)) return;
+            if (management.IsManaged(key)) return;
             WriteRegistryValue(key, value ?? string.Empty, RegistryValueKind.String);
         }
 
         void WriteBool(string key, bool value)
         {
-            if (policy.IsManagedByPolicy(key)) return;
+            if (management.IsManaged(key)) return;
             WriteRegistryValue(key, value ? 1 : 0, RegistryValueKind.DWord);
         }
 
         void WriteInt(string key, int value)
         {
-            if (policy.IsManagedByPolicy(key)) return;
+            if (management.IsManaged(key)) return;
             WriteRegistryValue(key, value, RegistryValueKind.DWord);
         }
 
@@ -152,13 +161,16 @@ public sealed class ConfigManager
         WriteInt("NetworkTimeout", settings.NetworkTimeout);
         WriteString("ReportingUrl", settings.ReportingUrl);
         WriteString("ReportingHeader", settings.ReportingHeader);
+        WriteBool("VerifyPackageSignatures", settings.VerifyPackageSignatures);
+        WriteString("ExpectedPublisher", settings.ExpectedPublisher);
+        WriteBool("AllowUnsigned", settings.AllowUnsigned);
     }
 
     // ── Private ──────────────────────────────────────────────────────
 
-    private void LoadPolicyAndUserSettings()
+    private void LoadManagementAndUserSettings()
     {
-        var policy = PolicyDetector.Instance;
+        var management = ManagementDetector.Instance;
 
         // Lowest priority first: baked-in default → HKCU user → HKLM machine → CSP policy.
         // Higher-priority sources overwrite earlier ones; CLI runs last from caller.
@@ -171,64 +183,72 @@ public sealed class ConfigManager
 
         LoadFromUserRegistry();
         LoadFromMachineRegistry();
-        LoadFromPolicy(policy);
+        LoadFromManagement(management);
     }
 
-    private void LoadFromPolicy(PolicyDetector policy)
+    private void LoadFromManagement(ManagementDetector management)
     {
-        if (policy.GetManagedString("ManifestUrl") is { Length: > 0 } url)
+        if (management.GetManagedString("ManifestUrl") is { Length: > 0 } url)
         {
             Config.ManifestUrl = url;
-            ManifestUrlSource = ConfigSource.Policy;
+            ManifestUrlSource = ConfigSource.Management;
         }
 
-        if (policy.GetManagedString("AuthorizationHeader") is { Length: > 0 } auth)
+        if (management.GetManagedString("AuthorizationHeader") is { Length: > 0 } auth)
             Config.AuthorizationHeader = auth;
 
-        if (policy.GetManagedBool("FollowRedirects") is { } followRedirects)
+        if (management.GetManagedBool("FollowRedirects") is { } followRedirects)
             Config.FollowRedirects = followRedirects;
 
-        if (policy.GetManagedBool("Reboot") is { } reboot)
+        if (management.GetManagedBool("Reboot") is { } reboot)
             Config.Reboot = reboot;
 
-        if (policy.GetManagedBool("SilentMode") is { } silent)
+        if (management.GetManagedBool("SilentMode") is { } silent)
             Config.SilentMode = silent;
 
-        if (policy.GetManagedBool("VerboseMode") is { } verbose)
+        if (management.GetManagedBool("VerboseMode") is { } verbose)
             Config.VerboseMode = verbose;
 
-        if (policy.GetManagedBool("DryRun") is { } dryRun)
+        if (management.GetManagedBool("DryRun") is { } dryRun)
             Config.DryRun = dryRun;
 
-        if (policy.GetManagedBool("EnableDialog") is { } enableDialog)
+        if (management.GetManagedBool("EnableDialog") is { } enableDialog)
             Config.EnableDialog = enableDialog;
 
-        if (policy.GetManagedBool("NoDialog") is { } noDialog)
+        if (management.GetManagedBool("NoDialog") is { } noDialog)
             Config.NoDialog = noDialog;
 
-        if (policy.GetManagedString("DialogTitle") is { Length: > 0 } title)
+        if (management.GetManagedString("DialogTitle") is { Length: > 0 } title)
             Config.DialogTitle = title;
 
-        if (policy.GetManagedString("DialogMessage") is { Length: > 0 } msg)
+        if (management.GetManagedString("DialogMessage") is { Length: > 0 } msg)
             Config.DialogMessage = msg;
 
-        if (policy.GetManagedString("DialogIcon") is { Length: > 0 } icon)
+        if (management.GetManagedString("DialogIcon") is { Length: > 0 } icon)
             Config.DialogIcon = icon;
 
-        if (policy.GetManagedBool("BlurScreen") is { } blur)
+        if (management.GetManagedBool("BlurScreen") is { } blur)
             Config.BlurScreen = blur;
 
-        if (policy.GetManagedString("CustomInstallPath") is { Length: > 0 } path)
+        if (management.GetManagedString("CustomInstallPath") is { Length: > 0 } path)
             Config.CustomInstallPath = path;
 
-        if (policy.GetManagedInt("NetworkTimeout") is { } timeout)
+        if (management.GetManagedInt("NetworkTimeout") is { } timeout)
             Config.NetworkTimeout = timeout;
 
-        if (policy.GetManagedString("ReportingUrl") is { Length: > 0 } reportingUrl)
+        if (management.GetManagedString("ReportingUrl") is { Length: > 0 } reportingUrl)
             Config.ReportingUrl = reportingUrl;
 
-        if (policy.GetManagedString("ReportingHeader") is { Length: > 0 } reportingHeader)
+        if (management.GetManagedString("ReportingHeader") is { Length: > 0 } reportingHeader)
             Config.ReportingHeader = reportingHeader;
+        if (management.GetManagedBool("VerifyPackageSignatures") is { } verifySig)
+            Config.VerifyPackageSignatures = verifySig;
+
+        if (management.GetManagedString("ExpectedPublisher") is { Length: > 0 } publisher)
+            Config.ExpectedPublisher = publisher;
+
+        if (management.GetManagedBool("AllowUnsigned") is { } allowUnsigned)
+            Config.AllowUnsigned = allowUnsigned;
     }
 
     private void LoadFromUserRegistry()
@@ -276,6 +296,9 @@ public sealed class ConfigManager
             Config.NetworkTimeout = ReadInt(settingsKey, "NetworkTimeout") ?? Config.NetworkTimeout;
             Config.ReportingUrl = ReadString(settingsKey, "ReportingUrl") ?? Config.ReportingUrl;
             Config.ReportingHeader = ReadString(settingsKey, "ReportingHeader") ?? Config.ReportingHeader;
+            Config.VerifyPackageSignatures = ReadBool(settingsKey, "VerifyPackageSignatures") ?? Config.VerifyPackageSignatures;
+            Config.ExpectedPublisher = ReadString(settingsKey, "ExpectedPublisher") ?? Config.ExpectedPublisher;
+            Config.AllowUnsigned = ReadBool(settingsKey, "AllowUnsigned") ?? Config.AllowUnsigned;
         }
         catch
         {

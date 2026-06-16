@@ -37,6 +37,7 @@
       <parentCategory ref="BootstrapMate" />
     </category>
     <category name="Reporting" displayName="$(string.Cat_Reporting)">
+    <category name="Security" displayName="$(string.Cat_Security)">
       <parentCategory ref="BootstrapMate" />
     </category>
   </categories>
@@ -251,6 +252,43 @@
       <elements>
         <text id="ReportingHeader_Value" valueName="ReportingHeader" />
       </elements>
+    <!-- ═══ Security ═══ -->
+
+    <policy name="VerifyPackageSignatures"
+            class="Machine"
+            displayName="$(string.VerifyPackageSignatures)"
+            explainText="$(string.VerifyPackageSignatures_Help)"
+            key="SOFTWARE\Policies\BootstrapMate"
+            valueName="VerifyPackageSignatures">
+      <parentCategory ref="Security" />
+      <supportedOn ref="windows:SUPPORTED_Windows_10_0" />
+      <enabledValue><decimal value="1" /></enabledValue>
+      <disabledValue><decimal value="0" /></disabledValue>
+    </policy>
+
+    <policy name="ExpectedPublisher"
+            class="Machine"
+            displayName="$(string.ExpectedPublisher)"
+            explainText="$(string.ExpectedPublisher_Help)"
+            key="SOFTWARE\Policies\BootstrapMate"
+            presentation="$(presentation.ExpectedPublisher)">
+      <parentCategory ref="Security" />
+      <supportedOn ref="windows:SUPPORTED_Windows_10_0" />
+      <elements>
+        <text id="ExpectedPublisher_Value" valueName="ExpectedPublisher" />
+      </elements>
+    </policy>
+
+    <policy name="AllowUnsigned"
+            class="Machine"
+            displayName="$(string.AllowUnsigned)"
+            explainText="$(string.AllowUnsigned_Help)"
+            key="SOFTWARE\Policies\BootstrapMate"
+            valueName="AllowUnsigned">
+      <parentCategory ref="Security" />
+      <supportedOn ref="windows:SUPPORTED_Windows_10_0" />
+      <enabledValue><decimal value="1" /></enabledValue>
+      <disabledValue><decimal value="0" /></disabledValue>
     </policy>
 
   </policies>

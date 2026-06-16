@@ -28,6 +28,10 @@ public sealed class BootstrapMateConfig
     // Reporting: vendor-neutral run-summary POST
     public string? ReportingUrl { get; set; }
     public string? ReportingHeader { get; set; }
+    // Security: installer signature verification
+    public bool VerifyPackageSignatures { get; set; } = true;
+    public string? ExpectedPublisher { get; set; }
+    public bool AllowUnsigned { get; set; }
 
     // Advanced
     public string? CustomInstallPath { get; set; }
