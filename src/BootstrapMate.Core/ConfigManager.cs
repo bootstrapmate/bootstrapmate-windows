@@ -50,6 +50,8 @@ public sealed class ConfigManager
         string? dialogTitle = null,
         string? dialogMessage = null,
         int? networkTimeout = null,
+        string? reportingUrl = null,
+        string? reportingHeader = null,
         bool? verifyPackageSignatures = null,
         string? expectedPublisher = null,
         bool? allowUnsigned = null)
@@ -79,6 +81,10 @@ public sealed class ConfigManager
             Config.DialogMessage = dialogMessage;
         if (networkTimeout.HasValue)
             Config.NetworkTimeout = networkTimeout.Value;
+        if (!string.IsNullOrWhiteSpace(reportingUrl))
+            Config.ReportingUrl = reportingUrl;
+        if (!string.IsNullOrWhiteSpace(reportingHeader))
+            Config.ReportingHeader = reportingHeader;
         if (verifyPackageSignatures.HasValue)
             Config.VerifyPackageSignatures = verifyPackageSignatures.Value;
         if (!string.IsNullOrWhiteSpace(expectedPublisher))
@@ -153,6 +159,8 @@ public sealed class ConfigManager
         WriteBool("BlurScreen", settings.BlurScreen);
         WriteString("CustomInstallPath", settings.CustomInstallPath);
         WriteInt("NetworkTimeout", settings.NetworkTimeout);
+        WriteString("ReportingUrl", settings.ReportingUrl);
+        WriteString("ReportingHeader", settings.ReportingHeader);
         WriteBool("VerifyPackageSignatures", settings.VerifyPackageSignatures);
         WriteString("ExpectedPublisher", settings.ExpectedPublisher);
         WriteBool("AllowUnsigned", settings.AllowUnsigned);
@@ -228,6 +236,11 @@ public sealed class ConfigManager
         if (management.GetManagedInt("NetworkTimeout") is { } timeout)
             Config.NetworkTimeout = timeout;
 
+        if (management.GetManagedString("ReportingUrl") is { Length: > 0 } reportingUrl)
+            Config.ReportingUrl = reportingUrl;
+
+        if (management.GetManagedString("ReportingHeader") is { Length: > 0 } reportingHeader)
+            Config.ReportingHeader = reportingHeader;
         if (management.GetManagedBool("VerifyPackageSignatures") is { } verifySig)
             Config.VerifyPackageSignatures = verifySig;
 
@@ -281,6 +294,8 @@ public sealed class ConfigManager
             Config.BlurScreen = ReadBool(settingsKey, "BlurScreen") ?? Config.BlurScreen;
             Config.CustomInstallPath = ReadString(settingsKey, "CustomInstallPath") ?? Config.CustomInstallPath;
             Config.NetworkTimeout = ReadInt(settingsKey, "NetworkTimeout") ?? Config.NetworkTimeout;
+            Config.ReportingUrl = ReadString(settingsKey, "ReportingUrl") ?? Config.ReportingUrl;
+            Config.ReportingHeader = ReadString(settingsKey, "ReportingHeader") ?? Config.ReportingHeader;
             Config.VerifyPackageSignatures = ReadBool(settingsKey, "VerifyPackageSignatures") ?? Config.VerifyPackageSignatures;
             Config.ExpectedPublisher = ReadString(settingsKey, "ExpectedPublisher") ?? Config.ExpectedPublisher;
             Config.AllowUnsigned = ReadBool(settingsKey, "AllowUnsigned") ?? Config.AllowUnsigned;

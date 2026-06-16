@@ -36,6 +36,7 @@
     <category name="Advanced" displayName="$(string.Cat_Advanced)">
       <parentCategory ref="BootstrapMate" />
     </category>
+    <category name="Reporting" displayName="$(string.Cat_Reporting)">
     <category name="Security" displayName="$(string.Cat_Security)">
       <parentCategory ref="BootstrapMate" />
     </category>
@@ -225,6 +226,32 @@
       </elements>
     </policy>
 
+    <!-- ═══ Reporting ═══ -->
+
+    <policy name="ReportingUrl"
+            class="Machine"
+            displayName="$(string.ReportingUrl)"
+            explainText="$(string.ReportingUrl_Help)"
+            key="SOFTWARE\Policies\BootstrapMate"
+            presentation="$(presentation.ReportingUrl)">
+      <parentCategory ref="Reporting" />
+      <supportedOn ref="windows:SUPPORTED_Windows_10_0" />
+      <elements>
+        <text id="ReportingUrl_Value" valueName="ReportingUrl" />
+      </elements>
+    </policy>
+
+    <policy name="ReportingHeader"
+            class="Machine"
+            displayName="$(string.ReportingHeader)"
+            explainText="$(string.ReportingHeader_Help)"
+            key="SOFTWARE\Policies\BootstrapMate"
+            presentation="$(presentation.ReportingHeader)">
+      <parentCategory ref="Reporting" />
+      <supportedOn ref="windows:SUPPORTED_Windows_10_0" />
+      <elements>
+        <text id="ReportingHeader_Value" valueName="ReportingHeader" />
+      </elements>
     <!-- ═══ Security ═══ -->
 
     <policy name="VerifyPackageSignatures"

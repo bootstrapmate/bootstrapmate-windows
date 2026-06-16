@@ -34,6 +34,18 @@ Before building, set up your environment variables:
 
 3. **Install your code signing certificate** in the Current User certificate store
 
+## Reporting
+
+When a run completes, BootstrapMate can POST a vendor-neutral JSON run summary to an optional endpoint, turning "did this PC provision cleanly?" into a fleet-dashboard query. The payload is plain JSON and not tied to any specific backend — any service accepting a JSON POST (a custom collector, ReportMate, MunkiReport, etc.) can consume it. Both the Windows and macOS clients emit the same schema.
+
+Configure via Intune CSP / Group Policy (the bundled ADMX), the machine/user registry, or both keys below:
+
+| Key | Type | Effect |
+|---|---|---|
+| `ReportingUrl` | string | Endpoint to POST the run summary to. When unset, no report is sent. |
+| `ReportingHeader` | string | Optional `Authorization` header value sent with the POST. |
+
+The POST is best-effort: it is bounded by a short timeout and never fails the run (a slow or unreachable endpoint can delay completion by up to that timeout). Payload fields include `tool`, `platform`, `version`, `runId`, `success`, `startTime`/`endTime`, `durationSeconds`, `architecture`, `hostname`, `serialNumber`, `manifestUrl`, and per-phase outcomes.
 ## Security: package signature verification
 
 Before any MSI or EXE installer is executed elevated, BootstrapMate verifies its Authenticode signature with `WinVerifyTrust`. A successful download only proves where the bytes came from — not who produced them. The signature gate ensures an installer carries a signature that chains to a trusted root (and, when configured, matches an expected publisher) before it runs as an elevated process.
