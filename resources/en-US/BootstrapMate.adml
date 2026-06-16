@@ -20,6 +20,7 @@
       <string id="Cat_Behavior">Behavior</string>
       <string id="Cat_Dialog">Dialog</string>
       <string id="Cat_Advanced">Advanced</string>
+      <string id="Cat_Reporting">Reporting</string>
       <string id="Cat_Security">Security</string>
 
       <!-- Connection -->
@@ -101,6 +102,20 @@ Default: C:\Program Files\BootstrapMate</string>
 Range: 10–600 seconds
 Default: 120 seconds</string>
 
+      <!-- Reporting -->
+      <string id="ReportingUrl">Reporting URL</string>
+      <string id="ReportingUrl_Help">URL to POST a vendor-neutral JSON run summary to when a bootstrap run completes.
+
+The payload includes the run ID, version, success, duration, architecture, hostname, serial number, manifest URL, and per-phase outcomes. Any endpoint that accepts a JSON POST can consume it.
+
+Leave empty to disable reporting. The POST is best-effort: it is bounded by a short timeout and never fails the run (a slow or unreachable endpoint can delay completion by up to that timeout).</string>
+
+      <string id="ReportingHeader">Reporting Authorization Header</string>
+      <string id="ReportingHeader_Help">Optional Authorization header value sent with the reporting POST request.
+
+Example: Bearer eyJhbGciOiJIUzI1NiIs...
+
+Leave empty if your reporting endpoint does not require authentication.</string>
       <!-- Security -->
       <string id="VerifyPackageSignatures">Verify package signatures</string>
       <string id="VerifyPackageSignatures_Help">Verify the Authenticode signature of MSI/EXE installers before running them elevated. The download only proves where bytes came from, not who produced them.
@@ -161,6 +176,15 @@ Default: Disabled</string>
         <decimalTextBox refId="NetworkTimeout_Value" defaultValue="120">Timeout (seconds):</decimalTextBox>
       </presentation>
 
+      <presentation id="ReportingUrl">
+        <textBox refId="ReportingUrl_Value">
+          <label>Reporting URL:</label>
+        </textBox>
+      </presentation>
+
+      <presentation id="ReportingHeader">
+        <textBox refId="ReportingHeader_Value">
+          <label>Authorization Header:</label>
       <presentation id="ExpectedPublisher">
         <textBox refId="ExpectedPublisher_Value">
           <label>Expected publisher:</label>

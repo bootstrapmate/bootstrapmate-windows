@@ -25,6 +25,9 @@ public sealed class BootstrapMateConfig
     public bool BlurScreen { get; set; }
     public bool NoDialog { get; set; }
 
+    // Reporting: vendor-neutral run-summary POST
+    public string? ReportingUrl { get; set; }
+    public string? ReportingHeader { get; set; }
     // Security: installer signature verification
     public bool VerifyPackageSignatures { get; set; } = true;
     public string? ExpectedPublisher { get; set; }
