@@ -49,7 +49,10 @@ public sealed class ConfigManager
         bool? noDialog = null,
         string? dialogTitle = null,
         string? dialogMessage = null,
-        int? networkTimeout = null)
+        int? networkTimeout = null,
+        bool? verifyPackageSignatures = null,
+        string? expectedPublisher = null,
+        bool? allowUnsigned = null)
     {
         if (!string.IsNullOrWhiteSpace(manifestUrl))
         {
@@ -76,6 +79,12 @@ public sealed class ConfigManager
             Config.DialogMessage = dialogMessage;
         if (networkTimeout.HasValue)
             Config.NetworkTimeout = networkTimeout.Value;
+        if (verifyPackageSignatures.HasValue)
+            Config.VerifyPackageSignatures = verifyPackageSignatures.Value;
+        if (!string.IsNullOrWhiteSpace(expectedPublisher))
+            Config.ExpectedPublisher = expectedPublisher;
+        if (allowUnsigned.HasValue)
+            Config.AllowUnsigned = allowUnsigned.Value;
     }
 
     /// <summary>Get the effective manifest URL from whatever source is active.</summary>
@@ -144,6 +153,9 @@ public sealed class ConfigManager
         WriteBool("BlurScreen", settings.BlurScreen);
         WriteString("CustomInstallPath", settings.CustomInstallPath);
         WriteInt("NetworkTimeout", settings.NetworkTimeout);
+        WriteBool("VerifyPackageSignatures", settings.VerifyPackageSignatures);
+        WriteString("ExpectedPublisher", settings.ExpectedPublisher);
+        WriteBool("AllowUnsigned", settings.AllowUnsigned);
     }
 
     // ── Private ──────────────────────────────────────────────────────
@@ -215,6 +227,15 @@ public sealed class ConfigManager
 
         if (policy.GetManagedInt("NetworkTimeout") is { } timeout)
             Config.NetworkTimeout = timeout;
+
+        if (policy.GetManagedBool("VerifyPackageSignatures") is { } verifySig)
+            Config.VerifyPackageSignatures = verifySig;
+
+        if (policy.GetManagedString("ExpectedPublisher") is { Length: > 0 } publisher)
+            Config.ExpectedPublisher = publisher;
+
+        if (policy.GetManagedBool("AllowUnsigned") is { } allowUnsigned)
+            Config.AllowUnsigned = allowUnsigned;
     }
 
     private void LoadFromUserRegistry()
@@ -260,6 +281,9 @@ public sealed class ConfigManager
             Config.BlurScreen = ReadBool(settingsKey, "BlurScreen") ?? Config.BlurScreen;
             Config.CustomInstallPath = ReadString(settingsKey, "CustomInstallPath") ?? Config.CustomInstallPath;
             Config.NetworkTimeout = ReadInt(settingsKey, "NetworkTimeout") ?? Config.NetworkTimeout;
+            Config.VerifyPackageSignatures = ReadBool(settingsKey, "VerifyPackageSignatures") ?? Config.VerifyPackageSignatures;
+            Config.ExpectedPublisher = ReadString(settingsKey, "ExpectedPublisher") ?? Config.ExpectedPublisher;
+            Config.AllowUnsigned = ReadBool(settingsKey, "AllowUnsigned") ?? Config.AllowUnsigned;
         }
         catch
         {
