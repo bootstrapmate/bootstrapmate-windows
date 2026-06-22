@@ -80,13 +80,13 @@ Only `msi` and `exe` items are Authenticode-gated; `nupkg`/`pkg`/`ps1` items con
 .\build.ps1 -SkipMSI
 
 # Run with a manifest URL
-.\publish\x64\managedbootstrapinstall.exe --url "https://your-domain.com/bootstrap/management.json"
+.\publish\executables\x64\managedbootstrapinstall.exe --url "https://your-domain.com/bootstrap/management.json"
 
 # Check status (useful for troubleshooting)
-.\publish\x64\managedbootstrapinstall.exe --status
+.\publish\executables\x64\managedbootstrapinstall.exe --status
 
 # Clear status (for testing)
-.\publish\x64\managedbootstrapinstall.exe --clear-status
+.\publish\executables\x64\managedbootstrapinstall.exe --clear-status
 ```
 
 ## Registry Status Contract

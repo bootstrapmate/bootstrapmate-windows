@@ -43,8 +43,9 @@
     <!-- Main Application Files -->
     <Component Id="BootstrapMateExecutable" Directory="INSTALLDIR" Guid="47855CCD-7EAB-464C-A795-26091DE8B83A">
       <File Id="BootstrapMateExe" Source="$(var.BIN_DIR)\managedbootstrapinstall.exe" KeyPath="yes" Vital="yes" />
-      <RemoveFile Id="RemoveOldExecutable" Name="managedbootstrapinstall.exe" On="both" />
-      <!-- Hard cut: sweep the legacy installapplications.exe left by pre-rename installs -->
+      <!-- Hard cut: sweep the legacy installapplications.exe left by pre-rename installs.
+           The current exe is in the File table and removed automatically on uninstall/upgrade,
+           so it needs no RemoveFile of its own. -->
       <RemoveFile Id="RemoveLegacyExecutable" Name="installapplications.exe" On="both" />
     </Component>
 
