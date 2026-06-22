@@ -33,7 +33,7 @@ public static class BootstrapMateConstants
     public const string CacheDirectory = @"C:\ProgramData\ManagedBootstrap\cache";
 
     /// <summary>CLI executable name.</summary>
-    public const string CliExecutableName = "installapplications.exe";
+    public const string CliExecutableName = "managedbootstrapinstall.exe";
 
     /// <summary>Default network timeout in seconds.</summary>
     public const int DefaultNetworkTimeout = 120;

@@ -58,7 +58,7 @@ jobs:
           $msi  = "$($now.Year - 2000).$($now.Month).$($now.Day).$($now.ToString('HHmm'))"
           "msi=$msi" | Out-File -Append $env:GITHUB_OUTPUT
 
-      - name: Build CLI (installapplications.exe)
+      - name: Build CLI (managedbootstrapinstall.exe)
         run: >
           dotnet publish BootstrapMate.csproj
           --configuration Release

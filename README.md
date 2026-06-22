@@ -80,13 +80,13 @@ Only `msi` and `exe` items are Authenticode-gated; `nupkg`/`pkg`/`ps1` items con
 .\build.ps1 -SkipMSI
 
 # Run with a manifest URL
-.\publish\x64\installapplications.exe --url "https://your-domain.com/bootstrap/management.json"
+.\publish\x64\managedbootstrapinstall.exe --url "https://your-domain.com/bootstrap/management.json"
 
 # Check status (useful for troubleshooting)
-.\publish\x64\installapplications.exe --status
+.\publish\x64\managedbootstrapinstall.exe --status
 
 # Clear status (for testing)
-.\publish\x64\installapplications.exe --clear-status
+.\publish\x64\managedbootstrapinstall.exe --clear-status
 ```
 
 ## Registry Status Contract
@@ -202,7 +202,7 @@ Create your Win32 app package with these files:
 
 ```
 BootstrapMate-Package/
-├── installapplications.exe         # BootstrapMate executable (x64 or ARM64)
+├── managedbootstrapinstall.exe         # BootstrapMate executable (x64 or ARM64)
 ├── appsettings.json                # Configuration file (optional)
 ├── install.ps1                     # Installation script (see examples/)
 └── detection.ps1                   # Detection script (above)
@@ -294,7 +294,7 @@ if (Test-Path $regPath) {
 }
 
 # Check detailed status
-& "$env:ProgramFiles\BootstrapMate\installapplications.exe" --status
+& "$env:ProgramFiles\BootstrapMate\managedbootstrapinstall.exe" --status
 ```
 
 ### Version Management
@@ -361,7 +361,7 @@ BootstrapMate for Windows enables IT administrators to:
 
 ```powershell
 # Deploy as Win32 app or PowerShell script
-$installCommand = "installapplications.exe --repo https://yourrepo.com/packages --bootstrap"
+$installCommand = "managedbootstrapinstall.exe --repo https://yourrepo.com/packages --bootstrap"
 ```
 
 ### 2. Package Manifest Structure
@@ -514,7 +514,7 @@ For detailed information, see [SBIN-INSTALLER-INTEGRATION.md](SBIN-INSTALLER-INT
 ### Command Line Options
 
 ```powershell
-installapplications.exe [OPTIONS]
+managedbootstrapinstall.exe [OPTIONS]
 
 Options:
   --repo <url>              Package repository URL

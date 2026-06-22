@@ -1001,7 +1001,7 @@ function Build-Architecture {
             throw "dotnet publish failed with exit code: $LASTEXITCODE"
         }
         
-        $executablePath = Join-Path $outputDir "installapplications.exe"
+        $executablePath = Join-Path $outputDir "managedbootstrapinstall.exe"
         
         if (-not (Test-Path $executablePath)) {
             throw "Expected executable not found: $executablePath"
@@ -2003,11 +2003,11 @@ try {
             Architecture = $arch
             Success = ($success -eq $true)
             Unsigned = ($success -eq "unsigned")
-            Path = "publish\executables\$arch\installapplications.exe"
+            Path = "publish\executables\$arch\managedbootstrapinstall.exe"
         }
         
         if ($Test -and ($success -eq $true -or $success -eq "unsigned")) {
-            $execPath = Join-Path $rootPath "publish\executables\$arch\installapplications.exe"
+            $execPath = Join-Path $rootPath "publish\executables\$arch\managedbootstrapinstall.exe"
             Test-Build -ExecutablePath $execPath
         }
     }
