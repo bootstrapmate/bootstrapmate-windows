@@ -149,7 +149,7 @@ namespace BootstrapMate
                 
                 var startInfo = new ProcessStartInfo
                 {
-                    FileName = Environment.ProcessPath ?? Path.Combine(AppContext.BaseDirectory, "installapplications.exe"),
+                    FileName = Environment.ProcessPath ?? Path.Combine(AppContext.BaseDirectory, "managedbootstrapinstall.exe"),
                     Arguments = string.Join(" ", args),
                     UseShellExecute = true,
                     Verb = "runas",  // Request elevation
@@ -224,7 +224,7 @@ namespace BootstrapMate
                     Console.WriteLine("   • Manage system components");
                     Console.WriteLine();
                     Console.WriteLine("   Please run BootstrapMate as Administrator, or use:");
-                    Console.WriteLine($"   sudo {Path.GetFileName(Environment.ProcessPath ?? "installapplications.exe")} {string.Join(" ", args)}");
+                    Console.WriteLine($"   sudo {Path.GetFileName(Environment.ProcessPath ?? "managedbootstrapinstall.exe")} {string.Join(" ", args)}");
                     Console.WriteLine();
                 }
                 
@@ -353,15 +353,15 @@ namespace BootstrapMate
                     if (!silentMode)
                     {
                         Console.WriteLine("Usage:");
-                        Console.WriteLine("  installapplications.exe --url <manifest-url>");
-                        Console.WriteLine("  installapplications.exe --help");
-                        Console.WriteLine("  installapplications.exe --version");
-                        Console.WriteLine("  installapplications.exe --status");
-                        Console.WriteLine("  installapplications.exe --clear-cache");
-                        Console.WriteLine("  installapplications.exe --reset-chocolatey");
-                        Console.WriteLine("  installapplications.exe --url <manifest-url> --force");
-                        Console.WriteLine("  installapplications.exe --url <manifest-url> --verbose");
-                        Console.WriteLine("  installapplications.exe --url <manifest-url> --silent");
+                        Console.WriteLine("  managedbootstrapinstall.exe --url <manifest-url>");
+                        Console.WriteLine("  managedbootstrapinstall.exe --help");
+                        Console.WriteLine("  managedbootstrapinstall.exe --version");
+                        Console.WriteLine("  managedbootstrapinstall.exe --status");
+                        Console.WriteLine("  managedbootstrapinstall.exe --clear-cache");
+                        Console.WriteLine("  managedbootstrapinstall.exe --reset-chocolatey");
+                        Console.WriteLine("  managedbootstrapinstall.exe --url <manifest-url> --force");
+                        Console.WriteLine("  managedbootstrapinstall.exe --url <manifest-url> --verbose");
+                        Console.WriteLine("  managedbootstrapinstall.exe --url <manifest-url> --silent");
                         Console.WriteLine();
                         Console.WriteLine("Options:");
                         Console.WriteLine("  --url <url>     URL to the bootstrapmate.json manifest");
@@ -398,7 +398,7 @@ namespace BootstrapMate
                         Console.WriteLine("to automatically install packages during Windows OOBE or setup scenarios.");
                         Console.WriteLine();
                         Console.WriteLine("Usage Examples:");
-                        Console.WriteLine("  installapplications.exe --url https://example.com/bootstrap/bootstrapmate.json");
+                        Console.WriteLine("  managedbootstrapinstall.exe --url https://example.com/bootstrap/bootstrapmate.json");
                         Console.WriteLine();
                         Console.WriteLine("Features:");
                         Console.WriteLine("  - Supports multiple package types: MSI, EXE, PowerShell, Chocolatey (.nupkg), sbin-installer (.pkg)");
