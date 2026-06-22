@@ -13,7 +13,7 @@
     <AssemblyCompany>Windows Admins Open Source</AssemblyCompany>
     <AssemblyProduct>BootstrapMate</AssemblyProduct>
     <AssemblyCopyright>Windows Admins Open Source 2025</AssemblyCopyright>
-    <AssemblyName>installapplications</AssemblyName>
+    <AssemblyName>managedbootstrapinstall</AssemblyName>
     <Nullable>enable</Nullable>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
     <WarningsAsErrors />

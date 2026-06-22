@@ -42,8 +42,11 @@
 
     <!-- Main Application Files -->
     <Component Id="BootstrapMateExecutable" Directory="INSTALLDIR" Guid="47855CCD-7EAB-464C-A795-26091DE8B83A">
-      <File Id="BootstrapMateExe" Source="$(var.BIN_DIR)\installapplications.exe" KeyPath="yes" Vital="yes" />
-      <RemoveFile Id="RemoveOldExecutable" Name="installapplications.exe" On="both" />
+      <File Id="BootstrapMateExe" Source="$(var.BIN_DIR)\managedbootstrapinstall.exe" KeyPath="yes" Vital="yes" />
+      <!-- Hard cut: sweep the legacy installapplications.exe left by pre-rename installs.
+           The current exe is in the File table and removed automatically on uninstall/upgrade,
+           so it needs no RemoveFile of its own. -->
+      <RemoveFile Id="RemoveLegacyExecutable" Name="installapplications.exe" On="both" />
     </Component>
 
     <!-- GUI Application files (BootstrapMate.exe + WinUI 3 dependencies) are
@@ -69,8 +72,8 @@
     </Component>
 
     <!-- Post-install: trigger the SelfHeal scheduled task via schtasks /Run.
-         We cannot call installapplications.exe directly from a deferred CA
-         because installapplications spawns child msiexec processes for the
+         We cannot call managedbootstrapinstall.exe directly from a deferred CA
+         because managedbootstrapinstall spawns child msiexec processes for the
          packages in management.json, and child msiexec deadlocks waiting for
          this MSI to release the Windows Installer mutex. Routing through the
          scheduled task runs it in its own process tree after this MSI
@@ -81,11 +84,11 @@
     <CustomAction Id="RunBootstrapMate" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec"
                   Execute="deferred" Return="ignore" Impersonate="no" />
 
-    <!-- Daily self-healing: register a scheduled task that re-runs installapplications.exe as
+    <!-- Daily self-healing: register a scheduled task that re-runs managedbootstrapinstall.exe as
          SYSTEM with no args (picks up CSP / HKLM Settings / default URL). Runs daily at 03:00,
          missed schedules run at next logon. Inline schtasks call avoids needing an external XML. -->
     <SetProperty Id="RegisterSelfHealTask"
-                 Value="&quot;[System64Folder]schtasks.exe&quot; /Create /TN &quot;BootstrapMate Self-Heal&quot; /TR &quot;\&quot;[INSTALLDIR]installapplications.exe\&quot; --force --silent --no-dialog&quot; /SC DAILY /ST 03:00 /RU SYSTEM /RL HIGHEST /F"
+                 Value="&quot;[System64Folder]schtasks.exe&quot; /Create /TN &quot;BootstrapMate Self-Heal&quot; /TR &quot;\&quot;[INSTALLDIR]managedbootstrapinstall.exe\&quot; --force --silent --no-dialog&quot; /SC DAILY /ST 03:00 /RU SYSTEM /RL HIGHEST /F"
                  Before="RegisterSelfHealTask" Sequence="execute" />
     <CustomAction Id="RegisterSelfHealTask" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec"
                   Execute="deferred" Return="ignore" Impersonate="no" />
