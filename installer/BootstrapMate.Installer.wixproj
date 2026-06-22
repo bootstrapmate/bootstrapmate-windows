@@ -52,8 +52,8 @@
   </Target>
 
   <Target Name="BeforeBuild">
-    <Error Text="BootstrapMate executable not found at $(BinDir)\installapplications.exe. Please run build.ps1 first."
-           Condition="!Exists('$(BinDir)\installapplications.exe')" />
+    <Error Text="BootstrapMate executable not found at $(BinDir)\managedbootstrapinstall.exe. Please run build.ps1 first."
+           Condition="!Exists('$(BinDir)\managedbootstrapinstall.exe')" />
     <Error Text="BootstrapMate GUI app executable not found at $(AppDir)\BootstrapMate.exe. Run build.ps1 to publish the GUI before building the MSI."
            Condition="!Exists('$(AppDir)\BootstrapMate.exe')" />
   </Target>

@@ -59,7 +59,7 @@ jobs:
           "full=$full" | Out-File -Append $env:GITHUB_OUTPUT
           "msi=$msi"   | Out-File -Append $env:GITHUB_OUTPUT
 
-      - name: Build CLI (installapplications.exe)
+      - name: Build CLI (managedbootstrapinstall.exe)
         run: >
           dotnet publish BootstrapMate.csproj
           --configuration Release
@@ -174,7 +174,7 @@ jobs:
 
           $zipDir = Join-Path $env:RUNNER_TEMP "zip-$arch"
           New-Item -ItemType Directory -Path $zipDir -Force | Out-Null
-          Copy-Item "publish/executables/$arch/installapplications.exe" $zipDir/
+          Copy-Item "publish/executables/$arch/managedbootstrapinstall.exe" $zipDir/
           if (Test-Path "publish/app/$arch/BootstrapMate.exe") {
             Copy-Item "publish/app/$arch/*" $zipDir/ -Recurse
           }
