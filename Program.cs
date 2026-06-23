@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.IO.Pipes;
 using System.Net.Http;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Text.Json;
 using System.Collections.Generic;
@@ -1294,74 +1295,168 @@ namespace BootstrapMate
             }
             
             // CRITICAL: sbin-installer MUST succeed - everything depends on it
-            // Use ultra-aggressive retry for sbin-installer, standard retry for others
+            // Use ultra-aggressive retry for sbin-installer, standard retry for others.
+            // NOTE: 1618 (another install already running) is NOT a package failure and
+            // is never counted against this budget - see the collision handling below.
             int maxRetries = isSbinInstaller ? 10 : 5;
             int retryDelaySeconds = isSbinInstaller ? 15 : 10;
             bool retryOnAnyError = isSbinInstaller; // sbin-installer retries on ANY error
-            
+
+            // Upper bound on how long we wait out a concurrent installer (notably the
+            // Intune Management Extension during ESP, which drives msiexec in parallel)
+            // before each launch. Generous on purpose: a large Win32 app can hold the
+            // global installer for several minutes.
+            const int installerIdleWaitSeconds = 600;
+            // Guard against an installer that never releases the mutex: cap how many
+            // un-counted 1618 collisions we will absorb before giving up.
+            const int maxCollisions = 30;
+            // Backoff between collision/launch-failure retries. WaitForWindowsInstallerIdle
+            // returns immediately when the mutex can't be opened (e.g. ACL denied), so
+            // without this a 1618 collision would busy-spin straight to maxCollisions.
+            const int collisionBackoffMs = 3000;
+            int collisions = 0;
+
             for (int attempt = 1; attempt <= maxRetries; attempt++)
             {
-                using var process = Process.Start(startInfo);
-                if (process != null)
+                // Serialize behind any in-progress MSI transaction so we don't collide
+                // with 1618 ERROR_INSTALL_ALREADY_RUNNING in the first place. This is
+                // the "brute force" part: BootstrapMate waits its turn instead of failing.
+                if (!WaitForWindowsInstallerIdle(installerIdleWaitSeconds))
                 {
-                    await process.WaitForExitAsync();
-                    WriteLog($"MSI installer completed with exit code: {process.ExitCode}");
-                    
-                    if (process.ExitCode == 0)
+                    // Still busy after the cap. We launch anyway (a resulting 1618 is
+                    // handled below as an un-counted collision), but surface the stall.
+                    WriteLog($"Windows Installer still busy after {installerIdleWaitSeconds}s; launching anyway (a 1618 will be retried, not failed)");
+                }
+
+                using var process = Process.Start(startInfo);
+                if (process == null)
+                {
+                    // Process.Start should not return null for a valid exe path, but if it
+                    // does, don't silently burn a retry with no diagnostics: log, back off,
+                    // and retry without consuming the functional budget.
+                    // Consume the attempt (bounded by maxRetries) rather than decrementing,
+                    // so a persistent launch failure can't spin forever.
+                    WriteLog("Failed to start msiexec.exe (Process.Start returned null); backing off and retrying");
+                    await Task.Delay(collisionBackoffMs);
+                    continue;
+                }
+
+                await process.WaitForExitAsync();
+                WriteLog($"MSI installer completed with exit code: {process.ExitCode}");
+
+                if (process.ExitCode == 0)
+                {
+                    // Success
+                    if (isSbinInstaller)
                     {
-                        // Success
-                        if (isSbinInstaller)
-                        {
-                            Logger.Info($"CRITICAL PACKAGE INSTALLED: {packageName}");
-                            WriteLog($"CRITICAL PACKAGE INSTALLED: {packageName}");
-                        }
-                        return;
+                        Logger.Info($"CRITICAL PACKAGE INSTALLED: {packageName}");
+                        WriteLog($"CRITICAL PACKAGE INSTALLED: {packageName}");
                     }
-                    else if (process.ExitCode == 1618)
+                    return;
+                }
+
+                if (process.ExitCode == 1618)
+                {
+                    // ERROR_INSTALL_ALREADY_RUNNING. This is a scheduling collision, not
+                    // a package failure - another installer grabbed the global
+                    // _MSIExecute mutex between our idle check and our launch. Wait for
+                    // it to finish and retry WITHOUT consuming the functional retry
+                    // budget, and log at debug only (never warn or fail on it).
+                    collisions++;
+                    if (collisions > maxCollisions)
                     {
-                        // ERROR_INSTALL_ALREADY_RUNNING - another MSI is active
-                        if (attempt < maxRetries)
-                        {
-                            WriteLog($"MSI installation in progress (error 1618), retrying in {retryDelaySeconds} seconds... (attempt {attempt}/{maxRetries})");
-                            Logger.Warning($"MSI installation in progress, retrying in {retryDelaySeconds} seconds... (attempt {attempt}/{maxRetries})");
-                            await Task.Delay(retryDelaySeconds * 1000);
-                            continue; // Retry
-                        }
-                        else
-                        {
-                            string errorMsg = isSbinInstaller 
-                                ? $"CRITICAL: {packageName} failed after {maxRetries} retries (error 1618). System cannot continue without this package."
-                                : $"MSI installer failed after {maxRetries} retries: Another installation is in progress (exit code: 1618)";
-                            throw new Exception(errorMsg);
-                        }
+                        throw new Exception($"MSI installer for {packageName} could not start: another Windows Installer transaction held the system across {collisions} collisions.");
                     }
-                    else
+                    WriteLog($"MSI already running (1618) - waiting for the active installer to finish, then retrying (collision {collisions}, not counted as a failed attempt)");
+                    WaitForWindowsInstallerIdle(installerIdleWaitSeconds);
+                    // Backoff so we don't busy-spin when the mutex can't be opened (ACL
+                    // denied) and WaitForWindowsInstallerIdle returns immediately.
+                    await Task.Delay(collisionBackoffMs);
+                    attempt--; // do not count a scheduling collision against maxRetries
+                    continue;
+                }
+
+                // Genuine install failure (non-zero, non-1618).
+                // For sbin-installer, retry on ANY error. For others, only retry on specific codes.
+                bool shouldRetry = retryOnAnyError || IsRetryableErrorCode(process.ExitCode);
+                if (shouldRetry && attempt < maxRetries)
+                {
+                    string reason = isSbinInstaller ? "CRITICAL PACKAGE - retrying on any error" : "retryable error code";
+                    WriteLog($"MSI installer failed with exit code {process.ExitCode} ({reason}), retrying in {retryDelaySeconds} seconds... (attempt {attempt}/{maxRetries})");
+                    Logger.Warning($"MSI error {process.ExitCode}, retrying in {retryDelaySeconds} seconds... (attempt {attempt}/{maxRetries})");
+                    await Task.Delay(retryDelaySeconds * 1000);
+                    continue;
+                }
+
+                // No more retries or non-retryable error
+                string errorMsg = isSbinInstaller
+                    ? $"CRITICAL: {packageName} failed with exit code {process.ExitCode} after {attempt} attempts. System cannot continue without this package."
+                    : $"MSI installer failed with exit code: {process.ExitCode}";
+                throw new Exception(errorMsg);
+            }
+        }
+
+        /// <summary>
+        /// Blocks until the global Windows Installer execute mutex (Global\_MSIExecute)
+        /// is free - i.e. no other MSI transaction is mid-execution - or until
+        /// maxWaitSeconds elapses. Windows Installer holds this mutex for the duration
+        /// of a package's InstallExecuteSequence, so waiting on it lets BootstrapMate
+        /// serialize behind concurrent installers (e.g. the Intune Management Extension
+        /// during ESP) instead of failing with 1618 ERROR_INSTALL_ALREADY_RUNNING.
+        ///
+        /// Best-effort by design: if the mutex can't be opened (absent, or access
+        /// denied by its ACL) we treat the installer as idle and return immediately,
+        /// so a permissions quirk never blocks a bootstrap. Returns true once idle,
+        /// false if the wait timed out.
+        /// </summary>
+        static bool WaitForWindowsInstallerIdle(int maxWaitSeconds)
+        {
+            var deadline = DateTime.UtcNow.AddSeconds(maxWaitSeconds);
+            bool logged = false;
+            while (true)
+            {
+                try
+                {
+                    if (!Mutex.TryOpenExisting(@"Global\_MSIExecute", out var mutex))
                     {
-                        // Other error codes
-                        // For sbin-installer, retry on ANY error. For others, only retry on specific codes.
-                        bool shouldRetry = retryOnAnyError || IsRetryableErrorCode(process.ExitCode);
-                        
-                        if (shouldRetry && attempt < maxRetries)
+                        // Mutex does not exist => no install is executing.
+                        return true;
+                    }
+                    using (mutex)
+                    {
+                        bool acquired = false;
+                        try
                         {
-                            string reason = isSbinInstaller ? "CRITICAL PACKAGE - retrying on any error" : "retryable error code";
-                            WriteLog($"MSI installer failed with exit code {process.ExitCode} ({reason}), retrying in {retryDelaySeconds} seconds... (attempt {attempt}/{maxRetries})");
-                            Logger.Warning($"MSI error {process.ExitCode}, retrying in {retryDelaySeconds} seconds... (attempt {attempt}/{maxRetries})");
-                            await Task.Delay(retryDelaySeconds * 1000);
-                            continue; // Retry
+                            acquired = mutex.WaitOne(0);
+                            if (acquired) return true; // installer idle
                         }
-                        else
+                        catch (AbandonedMutexException)
                         {
-                            // No more retries or non-retryable error
-                            string errorMsg = isSbinInstaller
-                                ? $"CRITICAL: {packageName} failed with exit code {process.ExitCode} after {attempt} attempts. System cannot continue without this package."
-                                : $"MSI installer failed with exit code: {process.ExitCode}";
-                            throw new Exception(errorMsg);
+                            return true; // previous owner died; the installer is idle
+                        }
+                        finally
+                        {
+                            if (acquired) mutex.ReleaseMutex();
                         }
                     }
                 }
+                catch (Exception)
+                {
+                    // Can't open/inspect the mutex (access denied, invalid name, etc.).
+                    // Don't block a bootstrap on it - treat as idle and let msiexec run.
+                    return true;
+                }
+
+                if (DateTime.UtcNow >= deadline) return false;
+                if (!logged)
+                {
+                    WriteLog("Windows Installer busy (another MSI transaction active) - waiting for it to finish before installing");
+                    logged = true;
+                }
+                Thread.Sleep(2000);
             }
         }
-        
+
         static bool IsRetryableErrorCode(int exitCode)
         {
             // Common retryable MSI error codes
