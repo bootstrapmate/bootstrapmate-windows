@@ -1243,6 +1243,10 @@ namespace BootstrapMate
             // Guard against an installer that never releases the mutex: cap how many
             // un-counted 1618 collisions we will absorb before giving up.
             const int maxCollisions = 30;
+            // Backoff between collision/launch-failure retries. WaitForWindowsInstallerIdle
+            // returns immediately when the mutex can't be opened (e.g. ACL denied), so
+            // without this a 1618 collision would busy-spin straight to maxCollisions.
+            const int collisionBackoffMs = 3000;
             int collisions = 0;
 
             for (int attempt = 1; attempt <= maxRetries; attempt++)
@@ -1250,10 +1254,25 @@ namespace BootstrapMate
                 // Serialize behind any in-progress MSI transaction so we don't collide
                 // with 1618 ERROR_INSTALL_ALREADY_RUNNING in the first place. This is
                 // the "brute force" part: BootstrapMate waits its turn instead of failing.
-                WaitForWindowsInstallerIdle(installerIdleWaitSeconds);
+                if (!WaitForWindowsInstallerIdle(installerIdleWaitSeconds))
+                {
+                    // Still busy after the cap. We launch anyway (a resulting 1618 is
+                    // handled below as an un-counted collision), but surface the stall.
+                    WriteLog($"Windows Installer still busy after {installerIdleWaitSeconds}s; launching anyway (a 1618 will be retried, not failed)");
+                }
 
                 using var process = Process.Start(startInfo);
-                if (process == null) continue;
+                if (process == null)
+                {
+                    // Process.Start should not return null for a valid exe path, but if it
+                    // does, don't silently burn a retry with no diagnostics: log, back off,
+                    // and retry without consuming the functional budget.
+                    // Consume the attempt (bounded by maxRetries) rather than decrementing,
+                    // so a persistent launch failure can't spin forever.
+                    WriteLog("Failed to start msiexec.exe (Process.Start returned null); backing off and retrying");
+                    await Task.Delay(collisionBackoffMs);
+                    continue;
+                }
 
                 await process.WaitForExitAsync();
                 WriteLog($"MSI installer completed with exit code: {process.ExitCode}");
@@ -1283,6 +1302,9 @@ namespace BootstrapMate
                     }
                     WriteLog($"MSI already running (1618) - waiting for the active installer to finish, then retrying (collision {collisions}, not counted as a failed attempt)");
                     WaitForWindowsInstallerIdle(installerIdleWaitSeconds);
+                    // Backoff so we don't busy-spin when the mutex can't be opened (ACL
+                    // denied) and WaitForWindowsInstallerIdle returns immediately.
+                    await Task.Delay(collisionBackoffMs);
                     attempt--; // do not count a scheduling collision against maxRetries
                     continue;
                 }
