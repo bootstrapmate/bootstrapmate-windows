@@ -981,11 +981,15 @@ namespace BootstrapMate
                 Logger.WriteSubProgress("Downloading from", url);
                 DialogManager.Instance.NotifyDownloadStarted(displayName);
                 
-                using var httpClient = new HttpClient();
+                // Use a 10-minute timeout so large MSIs (e.g. CimianTools ARM64) don't hit
+                // the 100-second HttpClient default on slow links. ResponseHeadersRead lets
+                // GetAsync return as soon as headers arrive; the body streams via CopyToAsync
+                // which is not subject to HttpClient.Timeout.
+                using var httpClient = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
                 var authHeader = ConfigManager.Instance.Config.AuthorizationHeader;
                 if (!string.IsNullOrEmpty(authHeader))
                     httpClient.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", authHeader);
-                using var response = await httpClient.GetAsync(url);
+                using var response = await httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
                 if (!response.IsSuccessStatusCode)
                 {
                     throw new Exception($"Download failed: {response.StatusCode}");
