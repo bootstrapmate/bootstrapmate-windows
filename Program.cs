@@ -981,11 +981,15 @@ namespace BootstrapMate
                 Logger.WriteSubProgress("Downloading from", url);
                 DialogManager.Instance.NotifyDownloadStarted(displayName);
                 
-                using var httpClient = new HttpClient();
+                using var httpClient = new HttpClient
+                {
+                    Timeout = Timeout.InfiniteTimeSpan
+                };
+                using var timeoutCts = new CancellationTokenSource(TimeSpan.FromMinutes(10));
                 var authHeader = ConfigManager.Instance.Config.AuthorizationHeader;
                 if (!string.IsNullOrEmpty(authHeader))
                     httpClient.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", authHeader);
-                using var response = await httpClient.GetAsync(url);
+                using var response = await httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, timeoutCts.Token);
                 if (!response.IsSuccessStatusCode)
                 {
                     throw new Exception($"Download failed: {response.StatusCode}");
@@ -994,8 +998,8 @@ namespace BootstrapMate
                 // Ensure the file stream is completely closed before proceeding
                 {
                     await using var fileStream = File.Create(localPath);
-                    await response.Content.CopyToAsync(fileStream);
-                    await fileStream.FlushAsync();
+                    await response.Content.CopyToAsync(fileStream, timeoutCts.Token);
+                    await fileStream.FlushAsync(timeoutCts.Token);
                 } // fileStream is disposed here
                 
                 // Add a small delay to ensure file handle is released
