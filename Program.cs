@@ -45,6 +45,23 @@ namespace BootstrapMate
         
         // Version in YYYY.MM.DD.HHMM format - injected at build time via MSBuild
         private static readonly string Version = GetBuildVersion();
+
+        // Host of the manifest URL actually used this run. The policy
+        // AuthorizationHeader exists to authenticate against the manifest
+        // server; it must be scoped to that host only. Sending it cross-host
+        // both leaks the credential to whatever hosts package URLs point at
+        // and breaks Azure blob storage, which returns 403 for public blobs
+        // when a request carries an Authorization header it can't validate
+        // (the fleet-visible symptom: every package "Download failed:
+        // Forbidden" on devices that receive the header via CSP).
+        private static string? _activeManifestHost;
+
+        private static bool ShouldAttachAuthHeader(string requestUrl)
+        {
+            return _activeManifestHost != null
+                && Uri.TryCreate(requestUrl, UriKind.Absolute, out var uri)
+                && string.Equals(uri.Host, _activeManifestHost, StringComparison.OrdinalIgnoreCase);
+        }
         
         private static string GetBuildVersion()
         {
@@ -679,7 +696,14 @@ namespace BootstrapMate
                 Logger.Debug($"Initialized status tracking with RunId: {StatusManager.GetCurrentRunId()}");
 
                 Logger.Info($"Downloading manifest from: {manifestUrl}");
-                
+
+                // Record the manifest host so the policy Authorization header can be
+                // scoped to it - packages hosted elsewhere (Azure blob) must never
+                // receive it (see ShouldAttachAuthHeader).
+                _activeManifestHost = Uri.TryCreate(manifestUrl, UriKind.Absolute, out var manifestUri)
+                    ? manifestUri.Host
+                    : null;
+
                 using var httpClient = new HttpClient();
                 httpClient.DefaultRequestHeaders.Add("User-Agent", $"BootstrapMate/{Version}");
                 var authHeader = ConfigManager.Instance.Config.AuthorizationHeader;
@@ -1019,9 +1043,19 @@ namespace BootstrapMate
                 DialogManager.Instance.NotifyDownloadStarted(displayName);
                 
                 using var httpClient = new HttpClient();
+                httpClient.DefaultRequestHeaders.Add("User-Agent", $"BootstrapMate/{Version}");
                 var authHeader = ConfigManager.Instance.Config.AuthorizationHeader;
                 if (!string.IsNullOrEmpty(authHeader))
-                    httpClient.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", authHeader);
+                {
+                    // Scope the policy credential to the manifest host. Azure blob
+                    // storage 403s public-blob requests carrying a foreign
+                    // Authorization header, and third-party hosts must not see the
+                    // org's token at all.
+                    if (ShouldAttachAuthHeader(url))
+                        httpClient.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", authHeader);
+                    else
+                        Logger.Debug($"Authorization header withheld for cross-host download: {url}");
+                }
                 using var response = await httpClient.GetAsync(url);
                 if (!response.IsSuccessStatusCode)
                 {
