@@ -284,8 +284,45 @@ namespace BootstrapMate
                 Console.WriteLine("[+] Running with administrator privileges");
                 Console.WriteLine();
             }
-            
-            return MainAsync(args).GetAwaiter().GetResult();
+
+            // Single-instance guard. Two concurrent sessions (e.g. an Intune-triggered
+            // run racing an interactive one) share the same cache directory and the
+            // Windows Installer mutex, so they corrupt each other: 1618s, cache files
+            // deleted mid-install, "file in use" failures. Serialize instead - the
+            // second session waits for the first to finish, then runs normally.
+            using var instanceMutex = new Mutex(initiallyOwned: false, @"Global\BootstrapMate.SingleInstance");
+            bool ownsInstanceMutex = false;
+            try
+            {
+                try { ownsInstanceMutex = instanceMutex.WaitOne(TimeSpan.Zero); }
+                catch (AbandonedMutexException) { ownsInstanceMutex = true; }
+
+                if (!ownsInstanceMutex)
+                {
+                    Logger.Info("Another BootstrapMate instance is already running - waiting for it to finish");
+                    if (!silentMode)
+                    {
+                        Console.WriteLine("[i] Another BootstrapMate instance is already running - waiting for it to finish...");
+                    }
+
+                    try { ownsInstanceMutex = instanceMutex.WaitOne(TimeSpan.FromMinutes(30)); }
+                    catch (AbandonedMutexException) { ownsInstanceMutex = true; }
+
+                    if (!ownsInstanceMutex)
+                    {
+                        Logger.Error("Timed out after 30 minutes waiting for another BootstrapMate instance to finish");
+                        return 1;
+                    }
+
+                    Logger.Info("Previous BootstrapMate instance finished - continuing");
+                }
+
+                return MainAsync(args).GetAwaiter().GetResult();
+            }
+            finally
+            {
+                if (ownsInstanceMutex) instanceMutex.ReleaseMutex();
+            }
         }
         
         static async Task<int> MainAsync(string[] args)
@@ -1290,7 +1327,7 @@ namespace BootstrapMate
             
             if (isSbinInstaller)
             {
-                Logger.Warning($"CRITICAL PACKAGE: {packageName} - using aggressive retry strategy");
+                Logger.Info($"CRITICAL PACKAGE: {packageName} - using aggressive retry strategy");
                 WriteLog($"CRITICAL PACKAGE: {packageName} - using aggressive retry strategy");
             }
             
