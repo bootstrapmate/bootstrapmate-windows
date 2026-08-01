@@ -67,7 +67,7 @@ jobs:
           --self-contained true
           --verbosity minimal
 
-      - name: Build GUI App (BootstrapMate.exe)
+      - name: Build GUI App (Managed Bootstrap Install.exe)
         run: >
           dotnet publish src/BootstrapMate.App/BootstrapMate.App.csproj
           --configuration Release

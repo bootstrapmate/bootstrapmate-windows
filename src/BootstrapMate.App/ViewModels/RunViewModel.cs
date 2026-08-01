@@ -63,7 +63,7 @@ public partial class RunViewModel : ObservableObject
         var cliPath = FindCliExecutable();
         if (cliPath is null)
         {
-            AppendLine("[ERROR] CLI executable not found. Install BootstrapMate or check the install path.", LogLevel.Error);
+            AppendLine("[ERROR] CLI executable not found. Install Managed Bootstrap Install or check the install path.", LogLevel.Error);
             IsRunning = false;
             return;
         }
@@ -101,7 +101,7 @@ public partial class RunViewModel : ObservableObject
                 return;
             }
 
-            AppendLine($"[i] BootstrapMate started (PID: {_cliProcess.Id})", LogLevel.Info);
+            AppendLine($"[i] Managed Bootstrap Install started (PID: {_cliProcess.Id})", LogLevel.Info);
 
             // Tail the log file in background
             var tailTask = TailLogFileAsync(logDir, existingLogs, _cts.Token);
@@ -121,7 +121,7 @@ public partial class RunViewModel : ObservableObject
         }
         catch (System.ComponentModel.Win32Exception)
         {
-            AppendLine("[ERROR] Elevation denied — BootstrapMate requires administrator privileges.", LogLevel.Error);
+            AppendLine("[ERROR] Elevation denied — Managed Bootstrap Install requires administrator privileges.", LogLevel.Error);
         }
         catch (Exception ex)
         {

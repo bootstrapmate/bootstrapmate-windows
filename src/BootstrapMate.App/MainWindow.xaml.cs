@@ -16,7 +16,7 @@ public sealed partial class MainWindow : Window
     {
         InitializeComponent();
 
-        Title = "BootstrapMate";
+        Title = "Managed Bootstrap Install";
 
         // DPI-aware sizing clamped to available screen work area
         var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
