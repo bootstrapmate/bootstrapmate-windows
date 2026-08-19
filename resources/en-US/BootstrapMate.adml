@@ -173,7 +173,7 @@ Default: Disabled</string>
       </presentation>
 
       <presentation id="NetworkTimeout">
-        <decimalTextBox refId="NetworkTimeout_Value" defaultValue="120">Timeout (seconds):</decimalTextBox>
+        <decimalTextBox refId="NetworkTimeout_Value" defaultValue="600">Timeout (seconds):</decimalTextBox>
       </presentation>
 
       <presentation id="ReportingUrl">

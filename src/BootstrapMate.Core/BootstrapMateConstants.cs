@@ -36,7 +36,7 @@ public static class BootstrapMateConstants
     public const string CliExecutableName = "managedbootstrapinstall.exe";
 
     /// <summary>Default network timeout in seconds.</summary>
-    public const int DefaultNetworkTimeout = 120;
+    public const int DefaultNetworkTimeout = 600;
 
     /// <summary>Default dialog title.</summary>
     public const string DefaultDialogTitle = "Setting Up Your Device";

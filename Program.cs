@@ -19,6 +19,8 @@ namespace BootstrapMate
 {
     class Program
     {
+        private const int DownloadBufferSize = 81920;
+
         // Windows API calls for suppressing system sounds
         [DllImport("kernel32.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
@@ -704,7 +706,7 @@ namespace BootstrapMate
                     ? manifestUri.Host
                     : null;
 
-                using var httpClient = new HttpClient();
+                using var httpClient = new HttpClient { Timeout = GetNetworkTimeout() };
                 httpClient.DefaultRequestHeaders.Add("User-Agent", $"BootstrapMate/{Version}");
                 var authHeader = ConfigManager.Instance.Config.AuthorizationHeader;
                 if (!string.IsNullOrEmpty(authHeader))
@@ -1042,7 +1044,13 @@ namespace BootstrapMate
                 Logger.WriteSubProgress("Downloading from", url);
                 DialogManager.Instance.NotifyDownloadStarted(displayName);
                 
-                using var httpClient = new HttpClient();
+                var networkTimeout = GetNetworkTimeout();
+                Logger.Debug($"Package download idle timeout: {networkTimeout.TotalSeconds:F0}s");
+
+                using var httpClient = new HttpClient
+                {
+                    Timeout = Timeout.InfiniteTimeSpan
+                };
                 httpClient.DefaultRequestHeaders.Add("User-Agent", $"BootstrapMate/{Version}");
                 var authHeader = ConfigManager.Instance.Config.AuthorizationHeader;
                 if (!string.IsNullOrEmpty(authHeader))
@@ -1056,7 +1064,8 @@ namespace BootstrapMate
                     else
                         Logger.Debug($"Authorization header withheld for cross-host download: {url}");
                 }
-                using var response = await httpClient.GetAsync(url);
+                using var responseTimeoutCts = new CancellationTokenSource(networkTimeout);
+                using var response = await httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, responseTimeoutCts.Token);
                 if (!response.IsSuccessStatusCode)
                 {
                     throw new Exception($"Download failed: {response.StatusCode}");
@@ -1065,7 +1074,8 @@ namespace BootstrapMate
                 // Ensure the file stream is completely closed before proceeding
                 {
                     await using var fileStream = File.Create(localPath);
-                    await response.Content.CopyToAsync(fileStream);
+                    await using var contentStream = await response.Content.ReadAsStreamAsync();
+                    await CopyToAsyncWithIdleTimeout(contentStream, fileStream, networkTimeout);
                     await fileStream.FlushAsync();
                 } // fileStream is disposed here
                 
@@ -1106,6 +1116,38 @@ namespace BootstrapMate
                 Logger.Warning($"Keeping cached file for inspection: {localPath}");
                 // Re-throw the exception so the caller knows the installation failed
                 throw;
+            }
+        }
+
+        static TimeSpan GetNetworkTimeout()
+        {
+            var seconds = ConfigManager.Instance.Config.NetworkTimeout;
+            if (seconds <= 0)
+                seconds = BootstrapMateConstants.DefaultNetworkTimeout;
+            return TimeSpan.FromSeconds(seconds);
+        }
+
+        static async Task CopyToAsyncWithIdleTimeout(Stream source, Stream destination, TimeSpan idleTimeout)
+        {
+            var buffer = new byte[DownloadBufferSize];
+
+            while (true)
+            {
+                using var readTimeoutCts = new CancellationTokenSource(idleTimeout);
+                int bytesRead;
+                try
+                {
+                    bytesRead = await source.ReadAsync(buffer.AsMemory(0, buffer.Length), readTimeoutCts.Token);
+                }
+                catch (OperationCanceledException ex)
+                {
+                    throw new TimeoutException($"Download stalled for {idleTimeout.TotalSeconds:F0}s with no data received.", ex);
+                }
+
+                if (bytesRead == 0)
+                    break;
+
+                await destination.WriteAsync(buffer.AsMemory(0, bytesRead));
             }
         }
         
