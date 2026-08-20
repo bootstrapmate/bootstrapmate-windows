@@ -29,6 +29,12 @@ public static class BootstrapMateConstants
     /// <summary>Log file directory.</summary>
     public const string LogDirectory = @"C:\ProgramData\ManagedBootstrap\logs";
 
+    /// <summary>
+    /// How long session logs are kept. Every run writes a new timestamped file, so
+    /// without a window the directory grows for the life of the machine.
+    /// </summary>
+    public const int LogRetentionDays = 30;
+
     /// <summary>Cache directory for downloaded packages.</summary>
     public const string CacheDirectory = @"C:\ProgramData\ManagedBootstrap\cache";
 
