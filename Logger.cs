@@ -41,7 +41,9 @@ namespace BootstrapMate
                 }
 
                 LogFile = Path.Combine(logDirectory, $"{DateTime.Now:yyyy-MM-dd-HHmmss}.log");
-                
+
+                PruneExpiredLogs(logDirectory);
+
                 // Write session header to log file
                 WriteToFile("=== BootstrapMate Session Started ===");
                 WriteToFile($"Version: {version}");
@@ -65,6 +67,52 @@ namespace BootstrapMate
                 {
                     Console.WriteLine($"Warning: Could not initialize logging: {ex.Message}");
                 }
+            }
+        }
+
+        /// <summary>
+        /// Deletes logs in <paramref name="logDirectory"/> older than the retention
+        /// window. Every run writes a new timestamped file and nothing has ever removed
+        /// one, so on a machine that has been enrolled for a year the directory holds
+        /// hundreds of them.
+        /// </summary>
+        /// <remarks>
+        /// Age comes from the file's last write time rather than its name: the directory
+        /// also collects logs written by wrapper scripts, which do not follow the
+        /// timestamped naming, and those need expiring too.
+        /// </remarks>
+        internal static void PruneExpiredLogs(string logDirectory, int? retentionDays = null)
+        {
+            var days = retentionDays ?? BootstrapMate.Core.BootstrapMateConstants.LogRetentionDays;
+            if (days <= 0)
+            {
+                return;
+            }
+
+            try
+            {
+                var cutoff = DateTime.Now.AddDays(-days);
+
+                foreach (var file in Directory.GetFiles(logDirectory, "*.log"))
+                {
+                    try
+                    {
+                        var info = new FileInfo(file);
+                        if (info.LastWriteTime < cutoff)
+                        {
+                            info.Delete();
+                        }
+                    }
+                    catch
+                    {
+                        // A log still held open elsewhere throws here. Skip it and try
+                        // again next run rather than aborting the sweep.
+                    }
+                }
+            }
+            catch
+            {
+                // Retention is best-effort and must never stop a bootstrap run.
             }
         }
 
