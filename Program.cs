@@ -208,9 +208,10 @@ namespace BootstrapMate
 
         static int Main(string[] args)
         {
-            // Handle version request immediately without admin check or verbose logging
+            // Handle version request immediately without admin check or verbose logging.
+            // Only --version and -V mean version; lowercase -v is the verbose switch.
             if (args.Length > 0 && (args[0].Equals("--version", StringComparison.OrdinalIgnoreCase) || 
-                                   args[0].Equals("-v", StringComparison.OrdinalIgnoreCase)))
+                                   args[0].Equals("-V", StringComparison.Ordinal)))
             {
                 Console.WriteLine(Version);
                 return 0;
@@ -221,7 +222,7 @@ namespace BootstrapMate
             
             // Check for verbose mode
             bool verboseMode = args.Any(arg => arg.Equals("--verbose", StringComparison.OrdinalIgnoreCase) || 
-                                              arg.Equals("-v", StringComparison.OrdinalIgnoreCase));
+                                              arg.Equals("-v", StringComparison.Ordinal));
             
             Logger.Initialize(LogDirectory, Version, verboseMode, silentMode);
             Logger.Debug("Main() called with arguments: " + string.Join(" ", args));
@@ -421,7 +422,7 @@ namespace BootstrapMate
                         Console.WriteLine("Options:");
                         Console.WriteLine("  --url <url>     URL to the bootstrapmate.json manifest");
                         Console.WriteLine("  --force         (Deprecated - downloads are always fresh. Cache is for inspection only)");
-                        Console.WriteLine("  --verbose       Show detailed logging output");
+                        Console.WriteLine("  --verbose, -v   Show detailed logging output");
                         Console.WriteLine("  --silent        Run completely silently (no console output)");
                         Console.WriteLine("  --no-dialog     Disable progress dialog (csharpdialog)");
                         Console.WriteLine("  --dialog-title  Custom title for progress dialog");
@@ -430,7 +431,7 @@ namespace BootstrapMate
                         Console.WriteLine("  --save-settings Save GUI settings to registry");
                         Console.WriteLine("  --save-settings-file <path>  Save settings from JSON file to registry");
                         Console.WriteLine("  --help          Show this help message");
-                        Console.WriteLine("  --version       Show version information");
+                        Console.WriteLine("  --version, -V   Show version information");
                         Console.WriteLine("  --status        Show current installation status");
                         Console.WriteLine("  --clear-status  Clear all installation status data");
                         Console.WriteLine("  --clear-cache   Clear all caches including failed installation files (BootstrapMate + Chocolatey)");
@@ -481,6 +482,7 @@ namespace BootstrapMate
                         break;
 
                     case "--verbose":
+                    case "-v":
                         // Verbose mode is already handled in Main()
                         break;
                         
@@ -652,6 +654,7 @@ namespace BootstrapMate
                         config.SilentMode = true;
                         break;
                     case "--verbose":
+                    case "-v":
                         config.VerboseMode = true;
                         break;
                     case "--force":
