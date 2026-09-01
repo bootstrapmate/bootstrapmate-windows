@@ -251,8 +251,9 @@ HKLM\SOFTWARE\BootstrapMate\
 
 BootstrapMate creates detailed logs:
 - **Location**: `C:\ProgramData\ManagedBootstrap\logs\`
-- **Format**: `YYYY-MM-DD-HHmmss.log`
-- **Content**: Detailed execution logs with timestamps
+- **File name**: one file per run, `YYYY-MM-DD-HHmmss.log`
+- **Line format**: `[yyyy-MM-dd HH:mm:ss] LEVEL message` in local time, where `LEVEL` is `DEBUG`, `INFO`, `WARN` or `ERROR` padded to five characters
+- **Retention**: files older than 30 days are deleted at the start of each run
 
 ### Common Issues
 
@@ -522,7 +523,8 @@ Options:
   --config <path>           Custom configuration file
   --phase <phase>           Run specific phase (setupassistant, userland)
   --dry-run                 Test mode without actual installation
-  --verbose                 Enable detailed logging
+  --verbose, -v             Enable detailed logging
+  --version, -V             Print the version and exit
   --uninstall               Remove service and cleanup
   --help                    Show help information
 ```
