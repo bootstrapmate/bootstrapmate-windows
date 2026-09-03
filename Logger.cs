@@ -175,17 +175,62 @@ namespace BootstrapMate
             };
         }
 
+        /// <summary>
+        /// Strips ANSI colour sequences. A package's own output is written for a terminal
+        /// and carries escape codes that nothing renders once they are in a log file.
+        /// </summary>
+        internal static string StripDecoration(string message)
+            => System.Text.RegularExpressions.Regex.Replace(message, @"\x1b\[[0-9;]*m", string.Empty);
+
+        /// <summary>
+        /// Writes one stamped line per line of <paramref name="message"/>.
+        /// </summary>
+        /// <remarks>
+        /// A multi-line message used to be written with a single stamp on the front, so only
+        /// its first line carried a timestamp and level and the rest landed in the log as bare
+        /// text. That is how a package's captured stdout ended up sitting unstamped between
+        /// two properly formatted lines. Blank lines are dropped: captured output is full of
+        /// them and they carry nothing.
+        /// </remarks>
         private static void WriteToFile(LogLevel level, string message)
         {
             if (string.IsNullOrEmpty(LogFile)) return;
-            
+
             try
             {
-                File.AppendAllText(LogFile, FormatLine(level, message, DateTime.Now) + Environment.NewLine);
+                var now = DateTime.Now;
+                var builder = new System.Text.StringBuilder();
+                foreach (var line in StripDecoration(message).Split('\n'))
+                {
+                    var text = line.TrimEnd('\r');
+                    if (string.IsNullOrWhiteSpace(text)) continue;
+                    builder.Append(FormatLine(level, text, now)).Append(Environment.NewLine);
+                }
+
+                if (builder.Length > 0)
+                    File.AppendAllText(LogFile, builder.ToString());
             }
             catch
             {
                 // Silent fail for file logging to not disrupt main process
+            }
+        }
+
+        /// <summary>
+        /// Records output captured from a package's own process: stdout at INFO, stderr at
+        /// WARN, one stamped line each, tagged so a reader can tell the package's words from
+        /// BootstrapMate's own. The tag is uppercase in brackets at the start of the message,
+        /// matching [PROGRESS] and [SUCCESS], which the log viewer renders as a pill.
+        /// </summary>
+        public static void WriteCapturedOutput(string package, string output, bool isError = false)
+        {
+            if (string.IsNullOrWhiteSpace(output)) return;
+            var level = isError ? LogLevel.Warning : LogLevel.Info;
+            foreach (var line in StripDecoration(output).Split('\n'))
+            {
+                var text = line.TrimEnd('\r');
+                if (string.IsNullOrWhiteSpace(text)) continue;
+                WriteToFile(level, $"[OUTPUT] {package}: {text}");
             }
         }
 

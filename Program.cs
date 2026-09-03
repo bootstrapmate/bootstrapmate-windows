@@ -1231,6 +1231,18 @@ namespace BootstrapMate
             return false;
         }
         
+        static string PackageLabel(JsonElement packageInfo)
+        {
+            if (packageInfo.ValueKind == JsonValueKind.Object &&
+                packageInfo.TryGetProperty("name", out var nameProp) &&
+                nameProp.ValueKind == JsonValueKind.String)
+            {
+                var name = nameProp.GetString();
+                if (!string.IsNullOrWhiteSpace(name)) return name!;
+            }
+            return "package";
+        }
+
         static async Task RunPowerShellScript(string scriptPath, JsonElement packageInfo)
         {
             var args = GetArguments(packageInfo);
@@ -1267,7 +1279,7 @@ namespace BootstrapMate
                     string output = await process.StandardOutput.ReadToEndAsync();
                     if (!string.IsNullOrWhiteSpace(output))
                     {
-                        WriteLog($"PowerShell output: {output}");
+                        Logger.WriteCapturedOutput(PackageLabel(packageInfo), output);
                     }
                 }
                 
@@ -1276,7 +1288,7 @@ namespace BootstrapMate
                     string error = await process.StandardError.ReadToEndAsync();
                     if (!string.IsNullOrWhiteSpace(error))
                     {
-                        WriteLog($"PowerShell error: {error}");
+                        Logger.WriteCapturedOutput(PackageLabel(packageInfo), error, isError: true);
                     }
                 }
                 
@@ -1571,7 +1583,7 @@ namespace BootstrapMate
                     string output = await process.StandardOutput.ReadToEndAsync();
                     if (!string.IsNullOrWhiteSpace(output))
                     {
-                        WriteLog($"Executable output: {output}");
+                        Logger.WriteCapturedOutput(PackageLabel(packageInfo), output);
                     }
                 }
                 
@@ -1580,7 +1592,7 @@ namespace BootstrapMate
                     string error = await process.StandardError.ReadToEndAsync();
                     if (!string.IsNullOrWhiteSpace(error))
                     {
-                        WriteLog($"Executable error: {error}");
+                        Logger.WriteCapturedOutput(PackageLabel(packageInfo), error, isError: true);
                     }
                 }
                 
@@ -2636,12 +2648,12 @@ namespace BootstrapMate
                 // Always log ALL output for debugging - this is critical for troubleshooting
                 if (!string.IsNullOrWhiteSpace(stdout))
                 {
-                    Logger.Debug($"Chocolatey stdout: {stdout.Trim()}");
+                    Logger.WriteCapturedOutput("Chocolatey", stdout);
                 }
                 
                 if (!string.IsNullOrWhiteSpace(stderr))
                 {
-                    Logger.Debug($"Chocolatey stderr: {stderr.Trim()}");
+                    Logger.WriteCapturedOutput("Chocolatey", stderr, isError: true);
                 }
                 
                 if (process.ExitCode != 0)
