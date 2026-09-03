@@ -70,17 +70,28 @@ public partial class LogsViewModel : ObservableObject
         if (!Directory.Exists(LogDirectory))
             return;
 
-        var files = Directory.GetFiles(LogDirectory, "*.log")
+        // A run is a session directory, logs\YYYY-MM-DD\HHMMSS\bootstrap.log. Flat
+        // per-run files at the root predate that layout and are still listed.
+        var sessions = Directory.GetDirectories(LogDirectory)
+            .SelectMany(day => Directory.GetDirectories(day)
+                .Select(session => (Day: System.IO.Path.GetFileName(day), Session: System.IO.Path.GetFileName(session), Path: session)))
+            .Select(entry =>
+            {
+                var log = Directory.GetFiles(entry.Path, "*.log")
+                    .OrderBy(path => System.IO.Path.GetFileName(path) == "bootstrap.log" ? 0 : 1)
+                    .FirstOrDefault();
+                return log is null ? null : new LogFile($"{entry.Day}-{entry.Session}", log, ParseStamp($"{entry.Day}-{entry.Session}"), FileSize(log));
+            })
+            .OfType<LogFile>();
+
+        var loose = Directory.GetFiles(LogDirectory, "*.log")
             .Select(path =>
             {
                 var name = System.IO.Path.GetFileName(path);
-                var baseName = System.IO.Path.GetFileNameWithoutExtension(name);
-                DateTime? date = DateTime.TryParseExact(baseName, "yyyy-MM-dd-HHmmss",
-                    CultureInfo.InvariantCulture, DateTimeStyles.None, out var d) ? d : null;
-                long size = 0;
-                try { size = new FileInfo(path).Length; } catch { }
-                return new LogFile(name, path, date, size);
-            })
+                return new LogFile(name, path, ParseStamp(System.IO.Path.GetFileNameWithoutExtension(name)), FileSize(path));
+            });
+
+        var files = sessions.Concat(loose)
             .OrderByDescending(f => f.Date ?? DateTime.MinValue)
             .ToList();
 
@@ -90,6 +101,25 @@ public partial class LogsViewModel : ObservableObject
         // Auto-select most recent
         if (SelectedLog is null && LogFiles.Count > 0)
             SelectedLog = LogFiles[0];
+    }
+
+    /// <summary>
+    /// A session or flat-file stamp, at second or minute resolution. The minute form
+    /// predates seconds and still appears on a device that has not been rebuilt.
+    /// </summary>
+    private static DateTime? ParseStamp(string stamp)
+    {
+        foreach (var format in new[] { "yyyy-MM-dd-HHmmss", "yyyy-MM-dd-HHmm" })
+        {
+            if (DateTime.TryParseExact(stamp, format, CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed))
+                return parsed;
+        }
+        return null;
+    }
+
+    private static long FileSize(string path)
+    {
+        try { return new FileInfo(path).Length; } catch { return 0; }
     }
 
     // ── Load Content ─────────────────────────────────────────────
