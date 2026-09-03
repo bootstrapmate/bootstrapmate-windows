@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 
 namespace BootstrapMate
@@ -15,6 +16,12 @@ namespace BootstrapMate
     public static class Logger
     {
         private static string? LogFile;
+        /// <summary>
+        /// The run's session directory and its structured files. Null only when the
+        /// session directory could not be created, in which case the run falls back
+        /// to a flat per-run file at the logs root.
+        /// </summary>
+        private static SessionLog? _session;
         private static bool _verboseConsole = false;
         private static bool _silentMode = false;
         private static DateTime _sessionStartTime;
@@ -26,7 +33,7 @@ namespace BootstrapMate
         /// </summary>
         public static void SetPipeWriter(TextWriter? writer) => _pipeWriter = writer;
         
-        public static void Initialize(string logDirectory, string version = "Unknown", bool verboseConsole = false, bool silentMode = false)
+        public static void Initialize(string logDirectory, string version = "Unknown", bool verboseConsole = false, bool silentMode = false, string runType = "provisioning")
         {
             try
             {
@@ -40,9 +47,17 @@ namespace BootstrapMate
                     Directory.CreateDirectory(logDirectory);
                 }
 
-                LogFile = Path.Combine(logDirectory, $"{DateTime.Now:yyyy-MM-dd-HHmmss}.log");
-
+                // Retention runs before the run opens its own directory: day directories
+                // past the window, session directories past the cap, and the loose per-run
+                // files the flat layout left at the root.
+                SessionLog.Prune(logDirectory, BootstrapMate.Core.BootstrapMateConstants.LogRetentionDays, _sessionStartTime);
                 PruneExpiredLogs(logDirectory);
+
+                // This run's session directory: logs\YYYY-MM-DD\HHMMSS\, holding
+                // bootstrap.log beside events.jsonl and session.json.
+                _session = SessionLog.Create(logDirectory, version, runType, _sessionStartTime);
+                LogFile = _session?.LogFilePath
+                    ?? Path.Combine(logDirectory, $"{_sessionStartTime:yyyy-MM-dd-HHmmss}.log");
 
                 // Write session header to log file
                 WriteToFile(LogLevel.Info, "=== BootstrapMate Session Started ===");
@@ -200,15 +215,24 @@ namespace BootstrapMate
             {
                 var now = DateTime.Now;
                 var builder = new System.Text.StringBuilder();
+                var records = new List<string>();
                 foreach (var line in StripDecoration(message).Split('\n'))
                 {
                     var text = line.TrimEnd('\r');
                     if (string.IsNullOrWhiteSpace(text)) continue;
                     builder.Append(FormatLine(level, text, now)).Append(Environment.NewLine);
+                    records.Add(text);
                 }
 
                 if (builder.Length > 0)
                     File.AppendAllText(LogFile, builder.ToString());
+
+                // The same records, structured, one JSON object per physical line.
+                if (_session is not null)
+                {
+                    var label = FileLevel(level);
+                    foreach (var text in records) _session.Append(label, text, now);
+                }
             }
             catch
             {
@@ -408,6 +432,10 @@ namespace BootstrapMate
             WriteToFile(LogLevel.Info, $"=== BootstrapMate Session Ended === (Duration: {duration.TotalSeconds:F1}s)");
             WriteToFile(LogLevel.Info, $"Session End Time: {timestamp}");
             WriteToFile(LogLevel.Info, $"Total Session Duration: {duration.TotalMinutes:F2} minutes");
+            _session?.Finish();
         }
+
+        /// <summary>The session id of the run in progress, when it has a session directory.</summary>
+        public static string? GetSessionId() => _session?.SessionId;
     }
 }
