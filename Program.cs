@@ -765,6 +765,8 @@ namespace BootstrapMate
                     }
                 }
                 
+                var failedPackages = new List<string>();
+
                 // Process setupassistant packages first
                 if (root.TryGetProperty("setupassistant", out var setupAssistant))
                 {
@@ -775,8 +777,20 @@ namespace BootstrapMate
                     
                     try
                     {
-                        await ProcessPackages(setupAssistant, "setupassistant", forceDownload);
-                        StatusManager.SetPhaseStatus(InstallationPhase.SetupAssistant, InstallationStage.Completed);
+                        var failed = await ProcessPackages(setupAssistant, "setupassistant", forceDownload);
+                        failedPackages.AddRange(failed);
+                        if (failed.Count > 0)
+                        {
+                            // Completed-with-failures is still a failed phase. Reporting
+                            // it as Completed is what let a device sit for weeks with
+                            // every package refused and nothing anywhere saying so.
+                            StatusManager.SetPhaseStatus(InstallationPhase.SetupAssistant, InstallationStage.Failed,
+                                $"{failed.Count} package(s) failed: {string.Join(", ", failed)}", 1);
+                        }
+                        else
+                        {
+                            StatusManager.SetPhaseStatus(InstallationPhase.SetupAssistant, InstallationStage.Completed);
+                        }
                         Logger.Debug("Setup Assistant packages completed successfully");
                     }
                     catch (Exception ex)
@@ -803,8 +817,20 @@ namespace BootstrapMate
                     
                     try
                     {
-                        await ProcessPackages(userland, "userland", forceDownload);
-                        StatusManager.SetPhaseStatus(InstallationPhase.Userland, InstallationStage.Completed);
+                        var failed = await ProcessPackages(userland, "userland", forceDownload);
+                        failedPackages.AddRange(failed);
+                        if (failed.Count > 0)
+                        {
+                            // Completed-with-failures is still a failed phase. Reporting
+                            // it as Completed is what let a device sit for weeks with
+                            // every package refused and nothing anywhere saying so.
+                            StatusManager.SetPhaseStatus(InstallationPhase.Userland, InstallationStage.Failed,
+                                $"{failed.Count} package(s) failed: {string.Join(", ", failed)}", 1);
+                        }
+                        else
+                        {
+                            StatusManager.SetPhaseStatus(InstallationPhase.Userland, InstallationStage.Completed);
+                        }
                         Logger.Debug("Userland packages completed successfully");
                     }
                     catch (Exception ex)
@@ -820,22 +846,42 @@ namespace BootstrapMate
                     Logger.Debug("No Userland packages found - marked as skipped");
                 }
 
-                Logger.Debug("BootstrapMate completed successfully!");
-                Logger.WriteCompletion("BootstrapMate completed successfully!");
+                var succeeded = failedPackages.Count == 0;
+
+                if (succeeded)
+                {
+                    Logger.Debug("BootstrapMate completed successfully!");
+                    Logger.WriteCompletion("BootstrapMate completed successfully!");
+                }
+                else
+                {
+                    Logger.Error($"BootstrapMate completed with {failedPackages.Count} failed package(s): {string.Join(", ", failedPackages)}");
+                    Logger.WriteCompletion($"BootstrapMate completed with {failedPackages.Count} failed package(s)");
+                }
                 
                 // Mark dialog as complete and close it
                 DialogManager.Instance.Complete("Setup Complete!");
                 await Task.Delay(2000); // Give user time to see completion message
                 DialogManager.Instance.Close();
                 
-                // Write successful completion to registry for Intune detection
-                StatusManager.WriteSuccessfulCompletionRegistry();
+                // Write successful completion to registry for Intune detection.
+                // Only on a genuinely clean run: LastRunVersion is the detection
+                // key, so stamping it after failures tells Intune the work is
+                // done and stops it ever retrying the packages that failed.
+                if (succeeded)
+                {
+                    StatusManager.WriteSuccessfulCompletionRegistry();
+                }
+                else
+                {
+                    Logger.Debug("Skipping LastRunVersion registry write - run had package failures, so Intune should retry");
+                }
                 
                 // Restore system sounds before completion
                 RestoreSystemSounds();
 
                 // Post a vendor-neutral run summary to the optional reporting endpoint.
-                await ReportManager.SendRunSummaryAsync(true, runStartUtc, Version, manifestUrl);
+                await ReportManager.SendRunSummaryAsync(succeeded, runStartUtc, Version, manifestUrl);
 
                 return 0;
             }
@@ -930,8 +976,18 @@ namespace BootstrapMate
             }
         }
         
-        static async Task ProcessPackages(JsonElement packages, string phase, bool forceDownload = false)
+        /// <summary>
+        /// Installs every package for a phase and returns the ones that failed.
+        ///
+        /// Failures are collected rather than thrown: one bad package must not
+        /// abort provisioning. They are returned rather than only logged
+        /// because the caller marked the phase Completed regardless, so a run
+        /// in which every MSI was refused still recorded a clean success and
+        /// Intune never retried it.
+        /// </summary>
+        static async Task<List<string>> ProcessPackages(JsonElement packages, string phase, bool forceDownload = false)
         {
+            var failures = new List<string>();
             Logger.Debug($"Processing packages for phase: {phase}");
             
             // Convert JsonElement array to list for sorting
@@ -1011,10 +1067,18 @@ namespace BootstrapMate
                     Logger.Error($"Failed to install package {displayName}: {ex.Message}");
                     Logger.WriteError($"Failed to install package {displayName}: {ex.Message}");
                     DialogManager.Instance.NotifyPackageFailure(displayName, "Failed");
+                    failures.Add(displayName);
                     // Continue with next package instead of stopping entire process
                     // Note: We don't re-throw because we want to continue with other packages
                 }
             }
+
+            if (failures.Count > 0)
+            {
+                Logger.Error($"{phase}: {failures.Count} of {sortedPackages.Count} package(s) failed: {string.Join(", ", failures)}");
+            }
+
+            return failures;
         }
         
         static async Task DownloadAndInstallPackage(string displayName, string url, string fileName, string type, JsonElement packageInfo, bool forceDownload = false)
