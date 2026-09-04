@@ -8,7 +8,7 @@
     <?define ProductVersion = "0.0.0"?>
   <?endif?>
   <!-- Package Definition -->
-  <Package Name="BootstrapMate"
+  <Package Name="Managed Bootstrap Install"
            Version="$(var.ProductVersion)"
            Manufacturer="Windows Admins Open Source"
            UpgradeCode="{87654321-4321-8765-CBA9-BA0987654321}"
@@ -32,12 +32,16 @@
            Cabinet="bootstrapmate.cab"
            EmbedCab="yes" />
 
+    <!-- Add/Remove Programs icon, sourced from the published GUI app output -->
+    <Icon Id="AppIcon.ico" SourceFile="$(var.APP_DIR)\Assets\BootstrapMate.ico" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon.ico" />
+
     <!-- Directory Structure -->
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLDIR" Name="BootstrapMate" />
     </StandardDirectory>
     <StandardDirectory Id="ProgramMenuFolder">
-      <Directory Id="ApplicationProgramsFolder" Name="BootstrapMate" />
+      <Directory Id="ApplicationProgramsFolder" Name="Managed Bootstrap Install" />
     </StandardDirectory>
 
     <!-- Main Application Files -->
@@ -49,7 +53,7 @@
       <RemoveFile Id="RemoveLegacyExecutable" Name="installapplications.exe" On="both" />
     </Component>
 
-    <!-- GUI Application files (BootstrapMate.exe + WinUI 3 dependencies) are
+    <!-- GUI Application files (Managed Bootstrap Install.exe + WinUI 3 dependencies) are
          harvested from $(var.APP_DIR) into the GuiAppFiles ComponentGroup by
          the Generate-GuiAppFiles.ps1 pre-build target in the wixproj. -->
 
@@ -111,14 +115,14 @@
     </Component>
 
     <!-- Start Menu shortcut for the BootstrapMate GUI app. Target is the
-         BootstrapMate.exe harvested into INSTALLDIR by Generate-GuiAppFiles.ps1;
+         Managed Bootstrap Install.exe harvested into INSTALLDIR by Generate-GuiAppFiles.ps1;
          we don't bind to its File Id since the deterministic id may change if
          the source path ever moves. -->
     <Component Id="StartMenuShortcut" Directory="ApplicationProgramsFolder" Guid="3F8B9D2A-7C4E-4B1A-9D2F-1A3B5C7E9D1F">
       <Shortcut Id="BootstrapMateStartMenuShortcut"
-                Name="BootstrapMate"
+                Name="Managed Bootstrap Install"
                 Description="MDM-agnostic bootstrapping tool for Windows"
-                Target="[INSTALLDIR]BootstrapMate.exe"
+                Target="[INSTALLDIR]Managed Bootstrap Install.exe"
                 WorkingDirectory="INSTALLDIR" />
       <RemoveFolder Id="CleanupApplicationProgramsFolder" Directory="ApplicationProgramsFolder" On="uninstall" />
       <!-- HKCU KeyPath required by MSI for shortcut-only components (ICE38/43/57). -->
