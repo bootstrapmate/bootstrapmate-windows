@@ -185,6 +185,9 @@ Default: Disabled</string>
       <presentation id="ReportingHeader">
         <textBox refId="ReportingHeader_Value">
           <label>Authorization Header:</label>
+        </textBox>
+      </presentation>
+
       <presentation id="ExpectedPublisher">
         <textBox refId="ExpectedPublisher_Value">
           <label>Expected publisher:</label>

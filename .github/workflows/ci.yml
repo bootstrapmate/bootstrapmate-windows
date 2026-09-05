@@ -37,6 +37,14 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Validate policy templates
+        shell: pwsh
+        run: |
+          foreach ($f in 'resources/BootstrapMate.admx', 'resources/en-US/BootstrapMate.adml') {
+            [xml](Get-Content -Raw $f) | Out-Null
+            Write-Host "OK: $f"
+          }
+
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
         with:

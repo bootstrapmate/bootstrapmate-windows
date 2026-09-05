@@ -37,6 +37,8 @@
       <parentCategory ref="BootstrapMate" />
     </category>
     <category name="Reporting" displayName="$(string.Cat_Reporting)">
+      <parentCategory ref="BootstrapMate" />
+    </category>
     <category name="Security" displayName="$(string.Cat_Security)">
       <parentCategory ref="BootstrapMate" />
     </category>
@@ -252,6 +254,8 @@
       <elements>
         <text id="ReportingHeader_Value" valueName="ReportingHeader" />
       </elements>
+    </policy>
+
     <!-- ═══ Security ═══ -->
 
     <policy name="VerifyPackageSignatures"
