@@ -2194,16 +2194,43 @@ namespace BootstrapMate
                 Logger.Debug("Step 4: Cleaning Chocolatey from PATH...");
                 try
                 {
-                    string currentPath = Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.Machine) ?? "";
-                    string cleanedPath = string.Join(";", 
-                        currentPath.Split(';')
-                                   .Where(p => !p.Contains("chocolatey", StringComparison.OrdinalIgnoreCase))
-                                   .Where(p => !string.IsNullOrWhiteSpace(p)));
-                    
-                    if (cleanedPath != currentPath)
+                    // Read and write Path straight from the registry. Environment.GetEnvironmentVariable
+                    // expands REG_EXPAND_SZ tokens, so writing the result back would permanently flatten
+                    // entries such as %SystemRoot% for every account on the machine.
+                    using var env = Registry.LocalMachine.OpenSubKey(
+                        @"SYSTEM\CurrentControlSet\Control\Session Manager\Environment", writable: true);
+
+                    if (env is null)
                     {
-                        Environment.SetEnvironmentVariable("PATH", cleanedPath, EnvironmentVariableTarget.Machine);
-                        Logger.Debug("Cleaned Chocolatey paths from system PATH");
+                        Logger.Warning("Could not open the machine environment key; leaving PATH untouched");
+                    }
+                    else
+                    {
+                        RegistryValueKind kind = env.GetValueKind("Path");
+                        string currentPath = env.GetValue("Path", "",
+                            RegistryValueOptions.DoNotExpandEnvironmentNames) as string ?? "";
+
+                        // Match Chocolatey's own directory, not every path containing the word.
+                        string chocoRoot = (Environment.GetEnvironmentVariable("ChocolateyInstall")
+                                            ?? @"C:\ProgramData\chocolatey").TrimEnd('\\');
+
+                        bool IsChocolateyEntry(string entry)
+                        {
+                            string trimmed = entry.Trim().TrimEnd('\\');
+                            return trimmed.Equals(chocoRoot, StringComparison.OrdinalIgnoreCase)
+                                || trimmed.StartsWith(chocoRoot + @"\", StringComparison.OrdinalIgnoreCase);
+                        }
+
+                        string cleanedPath = string.Join(";",
+                            currentPath.Split(';')
+                                       .Where(p => !string.IsNullOrWhiteSpace(p))
+                                       .Where(p => !IsChocolateyEntry(p)));
+
+                        if (cleanedPath != currentPath)
+                        {
+                            env.SetValue("Path", cleanedPath, kind);
+                            Logger.Debug($"Cleaned Chocolatey paths from system PATH (preserved {kind})");
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -3116,7 +3143,6 @@ namespace BootstrapMate
                 string[] chocolateyCachePaths = {
                     @"C:\ProgramData\chocolatey\temp",
                     @"C:\ProgramData\chocolatey\lib-bad", 
-                    @"C:\ProgramData\chocolatey\.chocolatey",
                     @"C:\ProgramData\chocolatey\logs",
                     @"C:\Users\" + Environment.UserName + @"\AppData\Local\Temp\chocolatey"
                 };
@@ -3131,7 +3157,7 @@ namespace BootstrapMate
                             Logger.Debug($"Aggressively cleared Chocolatey cache: {cachePath}");
                             
                             // Recreate essential directories
-                            if (cachePath.EndsWith("temp") || cachePath.EndsWith(".chocolatey"))
+                            if (cachePath.EndsWith("temp"))
                             {
                                 Directory.CreateDirectory(cachePath);
                                 Logger.Debug($"Recreated essential cache directory: {cachePath}");
