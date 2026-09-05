@@ -89,6 +89,21 @@ Only `msi` and `exe` items are Authenticode-gated; `nupkg`/`pkg`/`ps1` items con
 .\publish\executables\x64\managedbootstrapinstall.exe --clear-status
 ```
 
+## Exit Codes
+
+The CLI's exit code is the only thing an Intune app, a scheduled task or a wrapper
+script sees, so each outcome has its own value:
+
+| Code | Meaning |
+| --- | --- |
+| 0 | Success |
+| 1 | Usage error (unrecognised argument, missing value), or the manifest could not be fetched or processed |
+| 2 | The run completed but one or more packages failed |
+| 3 | Administrator privileges are required and were not obtained (nothing was attempted) |
+
+Code 3 is deliberately distinct from 1: an unelevated `--silent` run installed
+nothing and is a configuration mistake, not a failed installation.
+
 ## Registry Status Contract
 
 BootstrapMate tracks completion status in both 64-bit and 32-bit registry views:
