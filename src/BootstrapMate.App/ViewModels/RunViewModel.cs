@@ -259,11 +259,26 @@ public partial class RunViewModel : ObservableObject
 
     private static LogLevel ParseLogLevel(string line)
     {
-        if (line.Contains("[Error]") || line.Contains("[ERROR]") || line.Contains("[X]")) return LogLevel.Error;
-        if (line.Contains("[Warning]") || line.Contains("[WARNING]") || line.Contains("[!]")) return LogLevel.Warning;
-        if (line.Contains("[Success]") || line.Contains("[SUCCESS]") || line.Contains("[+]")) return LogLevel.Success;
-        if (line.Contains("[Debug]") || line.Contains("[DEBUG]") || line.Contains("[DBG]")) return LogLevel.Debug;
+        if (HasLevel(line, "ERROR") || line.Contains("[X]")) return LogLevel.Error;
+        if (HasLevel(line, "WARN") || line.Contains("[!]")) return LogLevel.Warning;
+        if (line.Contains("[+]")) return LogLevel.Success;
+        if (HasLevel(line, "DEBUG") || line.Contains("[DBG]")) return LogLevel.Debug;
         return LogLevel.Info;
+    }
+
+    /// <summary>
+    /// Logger.FormatLine writes "[timestamp] LEVEL message" with an unbracketed,
+    /// space-padded level token (INFO/WARN/ERROR/DEBUG), so matching "[WARNING]"
+    /// never fired and warnings rendered as ordinary lines. Match the token the
+    /// logger actually emits; the [X]/[!]/[+] markers below are the console form.
+    /// </summary>
+    private static bool HasLevel(string line, string level)
+    {
+        var close = line.IndexOf("] ", StringComparison.Ordinal);
+        if (close < 0) return false;
+        var rest = line.AsSpan(close + 2).TrimStart();
+        return rest.StartsWith(level, StringComparison.Ordinal)
+            && (rest.Length == level.Length || rest[level.Length] == ' ');
     }
 
     private static string? FindCliExecutable()

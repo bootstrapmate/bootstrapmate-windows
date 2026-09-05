@@ -26,7 +26,7 @@ Before building, set up your environment variables:
    ENTERPRISE_CERT_CN=Your Organization Code Signing Certificate
    
    # Your bootstrap manifest URL
-   BOOTSTRAP_MANIFEST_URL=https://your-domain.com/bootstrap/management.json
+   BOOTSTRAP_MANIFEST_URL=https://example.com/bootstrap/management.json
    
    # Optional: Specific certificate thumbprint
    # CERT_THUMBPRINT=1234567890ABCDEF1234567890ABCDEF12345678
@@ -80,7 +80,7 @@ Only `msi` and `exe` items are Authenticode-gated; `nupkg`/`pkg`/`ps1` items con
 .\build.ps1 -SkipMSI
 
 # Run with a manifest URL
-.\publish\executables\x64\managedbootstrapinstall.exe --url "https://your-domain.com/bootstrap/management.json"
+.\publish\executables\x64\managedbootstrapinstall.exe --url "https://example.com/bootstrap/management.json"
 
 # Check status (useful for troubleshooting)
 .\publish\executables\x64\managedbootstrapinstall.exe --status
@@ -115,19 +115,16 @@ HKLM\SOFTWARE\WOW6432Node\BootstrapMate\Status\Userland
 The most reliable way to deploy BootstrapMate is using the signed MSI installer:
 
 ```powershell
-# Build signed MSI packages with auto-detected certificate
-.\build-msi.ps1
-
-# Build with .intunewin packages for direct Intune upload
-.\build-msi.ps1 -IntuneWin
+# Build signed executables, MSI and .intunewin packages with an auto-detected certificate
+.\build.ps1
 
 # Deploy via Intune Win32 app using generated files:
 # - BootstrapMate-x64-VERSION.msi (signed, for x64 systems)
 # - BootstrapMate-arm64-VERSION.msi (signed, for ARM64 systems)  
 # - install-bootstrapmate.ps1 (installation script)
 # - detect-bootstrapmate.ps1 (detection script)
-# - BootstrapMate-x64-VERSION.intunewin (optional, for direct upload)
-# - BootstrapMate-arm64-VERSION.intunewin (optional, for direct upload)
+# - BootstrapMate-x64-VERSION.intunewin (for direct upload)
+# - BootstrapMate-arm64-VERSION.intunewin (for direct upload)
 ```
 
 **Benefits of MSI deployment:**
@@ -137,9 +134,7 @@ The most reliable way to deploy BootstrapMate is using the signed MSI installer:
 - ✅ Clean uninstall capability
 - ✅ Shows in Add/Remove Programs
 - ✅ Reliable upgrade path
-- ✅ **Optional .intunewin packages for direct Intune upload**
-
-See [MSI-DEPLOYMENT.md](MSI-DEPLOYMENT.md) for complete MSI deployment guide.
+- ✅ **.intunewin packages for direct Intune upload**
 
 ### Option 2: PowerShell Script Deployment
 
@@ -202,10 +197,9 @@ Create your Win32 app package with these files:
 
 ```
 BootstrapMate-Package/
-├── managedbootstrapinstall.exe         # BootstrapMate executable (x64 or ARM64)
-├── appsettings.json                # Configuration file (optional)
-├── install.ps1                     # Installation script (see examples/)
-└── detection.ps1                   # Detection script (above)
+├── managedbootstrapinstall.exe     # BootstrapMate executable (x64 or ARM64)
+├── install.ps1                     # Installation script
+└── detection.ps1                   # Detection script (see examples/detection-scripts/)
 ```
 
 ### Deployment Strategy
@@ -301,7 +295,7 @@ if (Test-Path $regPath) {
 ### Version Management
 
 #### Updating BootstrapMate
-1. **Build new version** with updated version number in `Program.cs`
+1. **Build new version** — the version is the build timestamp, generated automatically
 2. **Update detection script** with new version number
 3. **Create new Win32 app** or update existing with supersedence
 4. **Deploy to test group** first
@@ -329,18 +323,21 @@ BootstrapMate for Windows enables IT administrators to:
 ### Windows OOBE/Autopilot Workflow
 
 1. **MDM Trigger**: MDM system deploys BootstrapMate via Win32 app or script
-2. **Service Installation**: BootstrapMate installs itself as a Windows Service
+2. **First Run**: the MSI runs `managedbootstrapinstall.exe` at `InstallFinalize`
 3. **Configuration Download**: Downloads package manifest from configured repository
 4. **OOBE Package Installation**: Installs system-level packages during device setup
-5. **User Session Packages**: Waits for user login and installs user-specific software
-6. **Cleanup and Exit**: Removes itself after successful deployment
+5. **User Session Packages**: Installs the userland packages once a user session exists
+6. **Exit**: the process exits, having written its status to the registry
+7. **Self-Heal**: a daily scheduled task (`BootstrapMate Self-Heal`, 03:00 as SYSTEM) re-runs the CLI so a device that missed or failed a phase converges
+
+BootstrapMate is a one-shot process, not a resident service. Nothing supervises it between runs: a failed run is retried by the scheduled task, or by the MDM re-running the app, not by a service restart.
 
 ### Architecture
 
 ```
 ┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   MDM System    │───►│ InstallApps.exe  │───►│ Package Repo    │
-│ (Intune, etc.)  │    │ (Windows Service)│    │ (HTTPS/Azure)   │
+│   MDM System    │───►│ managedbootstrap │───►│ Package Repo    │
+│ (Intune, etc.)  │    │ install.exe (CLI)│    │ (HTTPS/Azure)   │
 └─────────────────┘    └──────────────────┘    └─────────────────┘
                                 │
                                 ▼
@@ -362,7 +359,7 @@ BootstrapMate for Windows enables IT administrators to:
 
 ```powershell
 # Deploy as Win32 app or PowerShell script
-$installCommand = "managedbootstrapinstall.exe --repo https://yourrepo.com/packages --bootstrap"
+$installCommand = "managedbootstrapinstall.exe --url https://example.com/bootstrap/bootstrapmate.json --silent"
 ```
 
 ### 2. Package Manifest Structure
@@ -374,14 +371,14 @@ $installCommand = "managedbootstrapinstall.exe --repo https://yourrepo.com/packa
       "name": "Microsoft Teams",
       "file": "teams.msi",
       "type": "msi",
-      "url": "https://repo.com/packages/teams.msi",
+      "url": "https://example.com/packages/teams.msi",
       "arguments": ["/quiet", "ALLUSERS=1"]
     },
     {
       "name": "System Utility",
       "file": "system-utility-1.0.0.nupkg",
       "type": "nupkg",
-      "url": "https://repo.com/packages/system-utility-1.0.0.nupkg",
+      "url": "https://example.com/packages/system-utility-1.0.0.nupkg",
       "arguments": ["--verbose"]
     }
   ],
@@ -390,14 +387,14 @@ $installCommand = "managedbootstrapinstall.exe --repo https://yourrepo.com/packa
       "name": "Adobe Reader",
       "file": "reader.exe", 
       "type": "exe",
-      "url": "https://repo.com/packages/reader.exe",
+      "url": "https://example.com/packages/reader.exe",
       "arguments": ["/S"]
     },
     {
       "name": "User App",
       "file": "userapp-2.0.0.pkg",
       "type": "pkg",
-      "url": "https://repo.com/packages/userapp-2.0.0.pkg",
+      "url": "https://example.com/packages/userapp-2.0.0.pkg",
       "target": "CurrentUserHomeDirectory",
       "arguments": ["--verbose"]
     }
@@ -456,7 +453,7 @@ Start-Process msiexec -ArgumentList "/i sbin-installer.msi /quiet" -Wait
       "name": "sbin-installer",
       "file": "sbin-installer.msi", 
       "type": "msi",
-      "url": "https://repo.com/packages/sbin-installer.msi",
+      "url": "https://example.com/packages/sbin-installer.msi",
       "arguments": ["/quiet"]
     }
   ]
@@ -472,7 +469,7 @@ Start-Process msiexec -ArgumentList "/i sbin-installer.msi /quiet" -Wait
       "name": "System Tool",
       "file": "systemtool-1.0.0.nupkg",
       "type": "nupkg",
-      "url": "https://repo.com/packages/systemtool-1.0.0.nupkg",
+      "url": "https://example.com/packages/systemtool-1.0.0.nupkg",
       "arguments": ["--verbose"]
     }
   ]
@@ -484,12 +481,10 @@ Start-Process msiexec -ArgumentList "/i sbin-installer.msi /quiet" -Wait
 - `"CurrentUserHomeDirectory"` → User's home folder  
 - `"C:\\Custom\\Path"` → Custom installation path
 
-For detailed information, see [SBIN-INSTALLER-INTEGRATION.md](SBIN-INSTALLER-INTEGRATION.md).
-
 ## Features
 
 ### Core Functionality
-- Windows Service architecture
+- One-shot CLI, run by the MSI at install time and by a daily self-heal scheduled task
 - OOBE/Autopilot integration
 - Multiple package format support
 - Dependency resolution
@@ -500,7 +495,7 @@ For detailed information, see [SBIN-INSTALLER-INTEGRATION.md](SBIN-INSTALLER-INT
 ### Planned Features
 - GUI progress window
 - Advanced logging and telemetry
-- Package verification (signatures, hashes)
+- Payload hash verification (Authenticode signature verification is already implemented)
 - Rollback capabilities
 - Configuration profiles
 - Integration with popular MDM systems
@@ -509,7 +504,7 @@ For detailed information, see [SBIN-INSTALLER-INTEGRATION.md](SBIN-INSTALLER-INT
 
 ### Prerequisites
 - Windows 10/11 (1809 or later)
-- .NET 8 Runtime
+- No runtime prerequisite — the executable is published self-contained
 - Administrative privileges
 
 ### Command Line Options
@@ -518,15 +513,22 @@ For detailed information, see [SBIN-INSTALLER-INTEGRATION.md](SBIN-INSTALLER-INT
 managedbootstrapinstall.exe [OPTIONS]
 
 Options:
-  --repo <url>              Package repository URL
-  --bootstrap               Install and start service
-  --config <path>           Custom configuration file
-  --phase <phase>           Run specific phase (setupassistant, userland)
-  --dry-run                 Test mode without actual installation
+  --url <url>               URL of the bootstrapmate.json / .yaml manifest
+  --force                   Deprecated; downloads are always fresh
   --verbose, -v             Enable detailed logging
+  --silent                  Run with no console output
+  --no-dialog               Disable the progress dialog
+  --blur-screen             Show the progress dialog full screen
+  --dialog-title <text>     Custom progress dialog title
+  --dialog-message <text>   Custom progress dialog message
+  --pipe <name>             Named pipe for GUI output streaming
+  --save-settings           Save GUI settings to the registry
+  --status                  Show current installation status
+  --clear-status            Clear all installation status data
+  --clear-cache             Clear caches, including failed installation files
+  --reset-chocolatey        Complete Chocolatey reset
   --version, -V             Print the version and exit
-  --uninstall               Remove service and cleanup
-  --help                    Show help information
+  --help, -h                Show help information
 ```
 
 ## Configuration
@@ -545,35 +547,41 @@ repository/
 ```
 
 ### Manifest Schema
+
+Items live under the two phase keys, `setupassistant` and `userland`. Each item must
+carry `name`, `url`, `file` and `type`; the rest are optional. See
+[examples/bootstrapmate.json](examples/bootstrapmate.json) for a runnable copy.
+
 ```json
 {
-  "$schema": "https://raw.githubusercontent.com/windowsadmins/bootstrapmate/main/schema.json",
-  "version": "1.0",
-  "packages": [
+  "setupassistant": [
     {
-      "name": "string",           // Package display name
-      "type": "msi|exe|ps1|nupkg|msix|registry|file",
-      "url": "string",            // Download URL
-      "hash": "string",           // SHA256 hash (optional)
-      "arguments": "string",      // Installation arguments
-      "phase": "setupassistant|userland",
-      "required": "boolean",      // Fail deployment if this fails
-      "dependencies": ["string"], // Package dependencies
-      "conditions": {             // Installation conditions
-        "os_version": ">=10.0.19041",
-        "architecture": "x64|arm64",
-        "domain_joined": true
-      }
+      "name": "Sample Application",
+      "file": "SampleApp.msi",
+      "url": "https://example.com/bootstrap/packages/SampleApp.msi",
+      "type": "msi",
+      "arguments": ["/quiet", "/norestart"],
+      "condition": "architecture_x64",
+      "expectedPublisher": "Example Publisher",
+      "allowUnsigned": false
     }
   ],
-  "settings": {
-    "timeout": 3600,             // Package timeout in seconds
-    "retries": 3,                // Retry attempts
-    "cleanup": true,             // Remove downloaded files
-    "reboot_required": false     // Reboot after completion
-  }
+  "userland": [
+    {
+      "name": "Modern App",
+      "file": "ModernApp-2.0.0.pkg",
+      "url": "https://example.com/bootstrap/packages/ModernApp-2.0.0.pkg",
+      "type": "pkg",
+      "target": "CurrentUserHomeDirectory"
+    }
+  ]
 }
 ```
+
+`type` is one of `msi`, `exe`, `ps1`, `nupkg` or `pkg`. `condition` accepts
+`architecture_x64` or `architecture_arm64`. There is no `hash` key: payload hash
+verification is not implemented (tracked in issue #33). YAML manifests are accepted and
+converted to the same shape.
 
 ## Development
 
@@ -581,26 +589,28 @@ repository/
 
 ```powershell
 # Clone repository
-git clone https://github.com/bootstrapmate/bootstrapmate-win.git
-cd bootstrapmate-win
+git clone https://github.com/bootstrapmate/bootstrapmate-windows.git
+cd bootstrapmate-windows
 
-# Build with signing
-.\build.ps1 -Sign
+# Signed build (signing is the default; a certificate is auto-detected)
+.\build.ps1
 
 # Build specific architecture
-.\build.ps1 -Architecture x64 -Sign
+.\build.ps1 -Architecture x64
 
 # Build and test
-.\build.ps1 -Sign -Test
+.\build.ps1 -Test
 ```
 
 ### Build Script Options
 
-- `-Sign`: Sign executables with enterprise certificate
 - `-Architecture`: Target architecture (x64, arm64, both)
+- `-Thumbprint`: Specific certificate thumbprint to use
 - `-Clean`: Clean build directories before building
 - `-Test`: Run basic functionality tests after building
-- `-Thumbprint`: Specific certificate thumbprint to use
+- `-AllowUnsigned`: Development build without signing (not for production)
+- `-SkipMSI`: Build executables only, skipping MSI and .intunewin
+- `-ListCerts` / `-FindCertSubject`: Inspect available code signing certificates
 
 ## Security Considerations
 
@@ -621,13 +631,14 @@ cd bootstrapmate-win
 
 ### Project Structure
 
+Three projects. There is no Windows Service, and no test project yet:
+
 ```
-src/
-├── BootstrapMate.Core/     # Core business logic
-├── BootstrapMate.Service/  # Windows Service
-├── BootstrapMate.CLI/      # Command line interface
-├── BootstrapMate.Common/   # Shared utilities
-└── BootstrapMate.Tests/    # Unit tests
+BootstrapMate.csproj        # CLI (managedbootstrapinstall.exe), sources at the repo root
+src/BootstrapMate.Core/     # Shared library (constants, signature verification, reporting)
+src/BootstrapMate.App/      # WinUI 3 GUI (BootstrapMate.exe), launches the CLI elevated
+installer/                  # WiX MSI: runs the CLI at InstallFinalize, registers the self-heal task
+examples/                   # Example manifest and Intune detection scripts
 ```
 
 ## Contributing
@@ -645,13 +656,13 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## Acknowledgments
 
 - Original [InstallApplications](https://github.com/macadmins/installapplications) macOS project
-- [Swift port](https://github.com/rodchristiansen/installapplications) by Rod Christiansen
 - [sbin-installer](https://github.com/windowsadmins/sbin-installer) for lightweight package management
+- [BootstrapMate for Mac](https://github.com/bootstrapmate/bootstrapmate-macintosh), the macOS counterpart
 - Windows Admin community for feedback and testing
 
 ## Support
 
-- 📚 [Documentation](https://github.com/bootstrapmate/bootstrapmate-win/wiki)
-- 🐛 [Issue Tracker](https://github.com/bootstrapmate/bootstrapmate-win/issues)
-- 💬 [Discussions](https://github.com/bootstrapmate/bootstrapmate-win/discussions)
-- 📖 [Examples](https://github.com/bootstrapmate/bootstrapmate-win/tree/main/examples)
+- 📚 [Documentation](https://github.com/bootstrapmate/bootstrapmate-windows/wiki)
+- 🐛 [Issue Tracker](https://github.com/bootstrapmate/bootstrapmate-windows/issues)
+- 💬 [Discussions](https://github.com/bootstrapmate/bootstrapmate-windows/discussions)
+- 📖 [Examples](https://github.com/bootstrapmate/bootstrapmate-windows/tree/main/examples)

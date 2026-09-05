@@ -5,8 +5,10 @@
     <UseWindowsForms>false</UseWindowsForms>
     <UseWPF>false</UseWPF>
     <OutputType>Exe</OutputType>
+    <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>true</SelfContained>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <PublishTrimmed>false</PublishTrimmed>
     <AssemblyTitle>BootstrapMate</AssemblyTitle>
     <AssemblyDescription>MDM-agnostic bootstrapping tool for Windows</AssemblyDescription>
@@ -40,20 +42,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="CommandLineParser" Version="2.9.1" />
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="9.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Hosting" Version="9.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="9.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Logging" Version="9.0.0" />
-    <PackageReference Include="Microsoft.Extensions.Logging.EventLog" Version="9.0.0" />
-    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
     <PackageReference Include="YamlDotNet" Version="16.3.0" />
-    <PackageReference Include="Serilog" Version="3.1.1" />
-    <PackageReference Include="Serilog.Extensions.Hosting" Version="8.0.0" />
-    <PackageReference Include="Serilog.Sinks.Console" Version="5.0.1" />
-    <PackageReference Include="Serilog.Sinks.File" Version="5.0.0" />
-    <PackageReference Include="Serilog.Sinks.EventLog" Version="3.1.0" />
-    <PackageReference Include="System.ServiceProcess.ServiceController" Version="9.0.0" />
   </ItemGroup>
 
   <ItemGroup>
@@ -64,16 +53,13 @@
     <EmbeddedResource Remove="src\**" />
   </ItemGroup>
 
-  <!-- Inject version as a compile-time constant -->
+  <!-- Version is read at runtime from this AssemblyMetadata attribute
+       (see src/BootstrapMate.Core/BootstrapMateConstants.cs) -->
   <ItemGroup>
     <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
       <_Parameter1>BuildTimestamp</_Parameter1>
       <_Parameter2>$(BuildTimestamp)</_Parameter2>
     </AssemblyAttribute>
   </ItemGroup>
-  
-  <PropertyGroup>
-    <DefineConstants>$(DefineConstants);BUILD_VERSION="$(BuildTimestamp)"</DefineConstants>
-  </PropertyGroup>
 
 </Project>

@@ -168,11 +168,26 @@ public partial class LogsViewModel : ObservableObject
 
     private static LogLineColor ColorForLine(string line)
     {
-        if (line.Contains("[Error]") || line.Contains("[ERROR]") || line.Contains("[X]")) return LogLineColor.Error;
-        if (line.Contains("[Warning]") || line.Contains("[WARNING]") || line.Contains("[!]")) return LogLineColor.Warning;
-        if (line.Contains("[Success]") || line.Contains("[SUCCESS]") || line.Contains("[+]")) return LogLineColor.Success;
-        if (line.Contains("[Debug]") || line.Contains("[DEBUG]") || line.Contains("[DBG]")) return LogLineColor.Debug;
+        if (HasLevel(line, "ERROR") || line.Contains("[X]")) return LogLineColor.Error;
+        if (HasLevel(line, "WARN") || line.Contains("[!]")) return LogLineColor.Warning;
+        if (line.Contains("[+]")) return LogLineColor.Success;
+        if (HasLevel(line, "DEBUG") || line.Contains("[DBG]")) return LogLineColor.Debug;
         if (line.StartsWith("===") || line.Contains("] ===")) return LogLineColor.Header;
         return LogLineColor.Default;
+    }
+
+    /// <summary>
+    /// Logger.FormatLine writes "[timestamp] LEVEL message" with an unbracketed,
+    /// space-padded level token (INFO/WARN/ERROR/DEBUG), so matching "[WARNING]"
+    /// never fired and warnings rendered as ordinary lines. Match the token the
+    /// logger actually emits; the [X]/[!]/[+] markers below are the console form.
+    /// </summary>
+    private static bool HasLevel(string line, string level)
+    {
+        var close = line.IndexOf("] ", StringComparison.Ordinal);
+        if (close < 0) return false;
+        var rest = line.AsSpan(close + 2).TrimStart();
+        return rest.StartsWith(level, StringComparison.Ordinal)
+            && (rest.Length == level.Length || rest[level.Length] == ' ');
     }
 }
