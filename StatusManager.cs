@@ -38,8 +38,15 @@ namespace BootstrapMate
 
     public static class StatusManager
     {
-        private const string BASE_REGISTRY_PATH = @"SOFTWARE\Cimian\BootstrapMate\Status";
-        private const string VERSION_REGISTRY_PATH = @"SOFTWARE\Cimian\BootstrapMate";
+        private const string BASE_REGISTRY_PATH = @"SOFTWARE\BootstrapMate\Status";
+        private const string VERSION_REGISTRY_PATH = @"SOFTWARE\BootstrapMate";
+
+        // Where status used to be written. Everything that reads status - the MSI,
+        // --status, --clear-status and the shipped detection scripts - has always used
+        // the paths above, so runs written here were invisible to all of them. Kept only
+        // so MigrateLegacyStatus can move an existing machine across once.
+        private const string LEGACY_BASE_REGISTRY_PATH = @"SOFTWARE\Cimian\BootstrapMate\Status";
+        private const string LEGACY_VERSION_REGISTRY_PATH = @"SOFTWARE\Cimian\BootstrapMate";
         private const string STATUS_FILE_PATH = @"C:\ProgramData\ManagedBootstrap\status.json";
         
         private static string _currentRunId = Guid.NewGuid().ToString();
@@ -60,6 +67,80 @@ namespace BootstrapMate
             }
             
             // Don't write version to registry here - only write it after successful completion
+
+            MigrateLegacyStatus();
+        }
+
+        /// <summary>
+        /// Copies status written under the old SOFTWARE\Cimian\BootstrapMate key to the
+        /// location every reader uses. Without this, a device provisioned by an older build
+        /// would read as never having run, and Intune detection would reinstall it.
+        /// Runs once: it only copies values the new location does not already have.
+        /// </summary>
+        private static void MigrateLegacyStatus()
+        {
+            var views = new[] { RegistryView.Registry64, RegistryView.Registry32 };
+
+            foreach (var view in views)
+            {
+                try
+                {
+                    using var baseKey = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, view);
+
+                    CopyValuesIfAbsent(baseKey, LEGACY_VERSION_REGISTRY_PATH, VERSION_REGISTRY_PATH);
+
+                    using var legacyStatus = baseKey.OpenSubKey(LEGACY_BASE_REGISTRY_PATH);
+                    if (legacyStatus != null)
+                    {
+                        foreach (var phaseName in legacyStatus.GetSubKeyNames())
+                        {
+                            CopyValuesIfAbsent(
+                                baseKey,
+                                $@"{LEGACY_BASE_REGISTRY_PATH}\{phaseName}",
+                                $@"{BASE_REGISTRY_PATH}\{phaseName}");
+                        }
+                    }
+                }
+                catch
+                {
+                    // Migration is best effort; never let it stop a run from starting.
+                }
+            }
+        }
+
+        private static void CopyValuesIfAbsent(RegistryKey baseKey, string fromPath, string toPath)
+        {
+            using var source = baseKey.OpenSubKey(fromPath);
+            if (source == null)
+            {
+                return;
+            }
+
+            var names = source.GetValueNames();
+            if (names.Length == 0)
+            {
+                return;
+            }
+
+            using var destination = baseKey.CreateSubKey(toPath, true);
+            if (destination == null)
+            {
+                return;
+            }
+
+            foreach (var name in names)
+            {
+                if (destination.GetValue(name) != null)
+                {
+                    continue;
+                }
+
+                var value = source.GetValue(name);
+                if (value != null)
+                {
+                    destination.SetValue(name, value, source.GetValueKind(name));
+                }
+            }
         }
 
         public static string GetCurrentRunId()

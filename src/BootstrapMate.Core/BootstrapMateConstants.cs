@@ -18,10 +18,10 @@ public static class BootstrapMateConstants
     public const string DefaultManifestUrl = "https://cimiancloudstorage.blob.core.windows.net/public/bootstrap/management.json";
 
     /// <summary>Registry path for status tracking.</summary>
-    public const string StatusRegistryPath = @"SOFTWARE\Cimian\BootstrapMate\Status";
+    public const string StatusRegistryPath = @"SOFTWARE\BootstrapMate\Status";
 
     /// <summary>Registry path for version/completion info.</summary>
-    public const string VersionRegistryPath = @"SOFTWARE\Cimian\BootstrapMate";
+    public const string VersionRegistryPath = @"SOFTWARE\BootstrapMate";
 
     /// <summary>Default installation directory.</summary>
     public const string DefaultInstallPath = @"C:\Program Files\BootstrapMate";
