@@ -46,6 +46,17 @@ namespace BootstrapMate
         // Version in YYYY.MM.DD.HHMM format - injected at build time via MSBuild
         private static readonly string Version = GetBuildVersion();
 
+        // Exit codes. Callers (Intune, scheduled tasks, wrapper scripts) judge a
+        // run by these, so each distinct outcome needs its own value:
+        //   0 success
+        //   1 usage error, or the run could not fetch/process the manifest
+        //   2 the run completed but one or more packages failed
+        //   3 elevation is required and was not obtained - a configuration
+        //     mistake, not a failed install attempt
+        private const int ExitSuccess = 0;
+        private const int ExitFailure = 1;
+        private const int ExitElevationRequired = 3;
+
         // Host of the manifest URL actually used this run. The policy
         // AuthorizationHeader exists to authenticate against the manifest
         // server; it must be scoped to that host only. Sending it cross-host
@@ -206,15 +217,22 @@ namespace BootstrapMate
             Logger.Debug(message);
         }
 
+        // -V and --version print the version; lowercase -v is verbose. The two
+        // short forms differ only by case, so this comparison must be ordinal.
+        static bool IsVersionSwitch(string arg) =>
+            arg.Equals("--version", StringComparison.OrdinalIgnoreCase) ||
+            arg.Equals("-V", StringComparison.Ordinal);
+
         static int Main(string[] args)
         {
             // Handle version request immediately without admin check or verbose logging.
             // Only --version and -V mean version; lowercase -v is the verbose switch.
-            if (args.Length > 0 && (args[0].Equals("--version", StringComparison.OrdinalIgnoreCase) || 
-                                   args[0].Equals("-V", StringComparison.Ordinal)))
+            // This is checked across every argument, not just args[0]: position must
+            // never decide whether a switch prints a string or provisions the machine.
+            if (args.Any(IsVersionSwitch))
             {
                 Console.WriteLine(Version);
-                return 0;
+                return ExitSuccess;
             }
             
             // Check for silent mode - suppress all console output
@@ -270,14 +288,14 @@ namespace BootstrapMate
                             Logger.Error("Failed to obtain administrator privileges. Cannot continue.");
                             Console.WriteLine("   ERROR: Failed to restart with administrator privileges.");
                             Console.WriteLine("   Please manually run as Administrator or use sudo.");
-                            return 1; // Error - elevation failed
+                            return ExitElevationRequired; // Elevation needed and not obtained
                         }
                     }
                     else
                     {
                         Logger.Error("User declined to restart as administrator. Cannot continue.");
                         Console.WriteLine("   Operation cancelled. BootstrapMate requires administrator privileges.");
-                        return 1; // Error - user declined elevation
+                        return ExitElevationRequired; // Elevation needed and declined
                     }
                 }
                 else
@@ -286,12 +304,17 @@ namespace BootstrapMate
                     if (TryRestartAsAdministrator(args))
                     {
                         Logger.Info("Successfully launched elevated process in silent mode. Exiting current instance.");
-                        return 0; // Success - elevated process will handle the work
+                        return ExitSuccess; // Elevated process will handle the work
                     }
                     else
                     {
-                        Logger.Error("Failed to obtain administrator privileges in silent mode. Cannot continue.");
-                        return 1; // Error - elevation failed
+                        // Silent mode cannot show a UAC prompt, so this is not a failed
+                        // install - nothing was attempted. Say so, and exit with a code
+                        // the caller can tell apart from a run that tried and broke.
+                        Logger.Error("BootstrapMate requires administrator privileges and --silent cannot prompt for elevation. " +
+                                     "Nothing was installed. Re-run from an elevated context (SYSTEM, or an elevated shell). " +
+                                     $"Exiting with code {ExitElevationRequired} (elevation required).");
+                        return ExitElevationRequired;
                     }
                 }
             }
@@ -421,6 +444,7 @@ namespace BootstrapMate
                         Console.WriteLine();
                         Console.WriteLine("Options:");
                         Console.WriteLine("  --url <url>     URL to the bootstrapmate.json manifest");
+                        Console.WriteLine("  --headers <value>  Authorization header value for manifest/package downloads");
                         Console.WriteLine("  --force         (Deprecated - downloads are always fresh. Cache is for inspection only)");
                         Console.WriteLine("  --verbose, -v   Show detailed logging output");
                         Console.WriteLine("  --silent        Run completely silently (no console output)");
@@ -436,8 +460,19 @@ namespace BootstrapMate
                         Console.WriteLine("  --clear-status  Clear all installation status data");
                         Console.WriteLine("  --clear-cache   Clear all caches including failed installation files (BootstrapMate + Chocolatey)");
                         Console.WriteLine("  --reset-chocolatey  Complete Chocolatey reset (removes corrupted lib folder)");
+                        Console.WriteLine();
+                        Console.WriteLine("Accepted but NOT implemented (see issue #27) - passing these logs a warning:");
+                        Console.WriteLine("  --follow-redirects  Ignored");
+                        Console.WriteLine("  --reboot            Ignored - the machine is never restarted");
+                        Console.WriteLine("  --dry-run           Refused - the run exits rather than installing for real");
+                        Console.WriteLine();
+                        Console.WriteLine("Exit codes:");
+                        Console.WriteLine("  0  Success");
+                        Console.WriteLine("  1  Usage error, or the manifest could not be fetched/processed");
+                        Console.WriteLine("  2  Run completed but one or more packages failed");
+                        Console.WriteLine("  3  Administrator privileges required and not obtained");
                     }
-                    return 0;
+                    return ExitSuccess;
                 }
             }
             
@@ -445,6 +480,12 @@ namespace BootstrapMate
             {
                 switch (args[i].ToLower())
                 {
+                    case "--version":
+                        // Also handled ahead of the elevation check in Main(); kept
+                        // here so the switch table is honest about what it accepts.
+                        Console.WriteLine(Version);
+                        return ExitSuccess;
+
                     case "--help":
                     case "-h":
                         Console.WriteLine("BootstrapMate Help");
@@ -463,7 +504,13 @@ namespace BootstrapMate
                         Console.WriteLine("  - Architecture-specific conditional installation");
                         Console.WriteLine("  - Registry-based status tracking for detection scripts");
                         Console.WriteLine("  - Primary installer: sbin-installer (lightweight, fast)");
-                        return 0;
+                        Console.WriteLine();
+                        Console.WriteLine("Exit codes:");
+                        Console.WriteLine("  0  Success");
+                        Console.WriteLine("  1  Usage error, or the manifest could not be fetched/processed");
+                        Console.WriteLine("  2  Run completed but one or more packages failed");
+                        Console.WriteLine("  3  Administrator privileges required and not obtained");
+                        return ExitSuccess;
 
                     case "--status":
                         return ShowStatus();
@@ -475,7 +522,7 @@ namespace BootstrapMate
                         return ClearCache();
 
                     case "--reset-chocolatey":
-                        return ResetChocolatey();
+                        return ResetChocolatey(silentMode);
 
                     case "--force":
                         forceDownload = true;
@@ -542,7 +589,58 @@ namespace BootstrapMate
                         if (i + 1 < args.Length)
                             return SaveSettingsFromFile(args[++i]);
                         Console.WriteLine("ERROR: --save-settings-file requires a file path");
-                        return 1;
+                        return ExitFailure;
+
+                    case "--headers":
+                        // The GUI passes the authorization header this way. Consume the
+                        // value - leaving it in place made the header string itself get
+                        // parsed as the next switch - and feed it through the same
+                        // ConfigManager path the policy/registry header uses, so
+                        // ShouldAttachAuthHeader() still governs which hosts see it.
+                        if (i + 1 < args.Length)
+                        {
+                            ConfigManager.Instance.ApplyCliArguments(authorizationHeader: args[i + 1]);
+                            Logger.Debug("Authorization header set from --headers");
+                            i++;
+                        }
+                        else
+                        {
+                            Console.WriteLine("ERROR: --headers requires a header value");
+                            Logger.Error("--headers requires a header value");
+                            return ExitFailure;
+                        }
+                        break;
+
+                    // The next three switches are accepted because the GUI emits them,
+                    // but nothing in this CLI implements the behaviour behind them (see
+                    // issue #27). Say so out loud rather than appearing to honour them.
+                    case "--follow-redirects":
+                        Logger.Warning("--follow-redirects is not implemented in the CLI and is being ignored; redirects are handled by the default HttpClient behaviour");
+                        if (!silentMode)
+                            Console.WriteLine("WARNING: --follow-redirects is not implemented and is being ignored.");
+                        break;
+
+                    case "--reboot":
+                        Logger.Warning("--reboot is not implemented in the CLI and is being ignored; the machine will NOT be restarted when the run finishes");
+                        if (!silentMode)
+                            Console.WriteLine("WARNING: --reboot is not implemented and is being ignored. The machine will not be restarted.");
+                        break;
+
+                    case "--dry-run":
+                        // A dry run has no implementation, so continuing would install
+                        // for real - the exact opposite of what was asked. Refuse.
+                        Logger.Error("--dry-run is not implemented in the CLI. Refusing to run, because continuing would perform a real installation.");
+                        Console.WriteLine("ERROR: --dry-run is not implemented. Refusing to run - continuing would install for real.");
+                        return ExitFailure;
+
+                    default:
+                        // No silent skipping. An unrecognised argument means the caller
+                        // and this parser have drifted apart, which is how a GUI dry run
+                        // came to perform a real installation.
+                        Logger.Error($"Unrecognised argument: {args[i]}");
+                        Console.WriteLine($"ERROR: Unrecognised argument: {args[i]}");
+                        Console.WriteLine("Run with --help to see the supported options.");
+                        return ExitFailure;
                 }
             }
 
@@ -3322,22 +3420,35 @@ namespace BootstrapMate
             }
         }
 
-        static int ResetChocolatey()
+        static int ResetChocolatey(bool silentMode = false)
         {
             try
             {
                 Console.WriteLine("Resetting Chocolatey (complete cleanup)...");
                 Console.WriteLine("WARNING: This will remove ALL Chocolatey packages and force a clean reinstall.");
                 Console.WriteLine();
-                
-                // Confirm with user (unless running in automated scenarios)
-                Console.Write("Are you sure you want to completely reset Chocolatey? (y/N): ");
-                var response = Console.ReadLine()?.Trim().ToLowerInvariant();
-                
-                if (response != "y" && response != "yes")
+
+                // Confirm with the user, but only when there is a user to answer.
+                // Under --silent, or with stdin redirected (scheduled task, remote
+                // session, MDM script), the prompt would block on input that never
+                // arrives and the caller would see a timeout instead of a result.
+                bool canPrompt = !silentMode && !Console.IsInputRedirected;
+                if (canPrompt)
                 {
-                    Console.WriteLine("Chocolatey reset cancelled.");
-                    return 0;
+                    Console.Write("Are you sure you want to completely reset Chocolatey? (y/N): ");
+                    var response = Console.ReadLine()?.Trim().ToLowerInvariant();
+
+                    if (response != "y" && response != "yes")
+                    {
+                        Console.WriteLine("Chocolatey reset cancelled.");
+                        return ExitSuccess;
+                    }
+                }
+                else
+                {
+                    Logger.Info("Non-interactive session detected (--silent or redirected stdin) - proceeding with Chocolatey reset without confirmation");
+                    if (!silentMode)
+                        Console.WriteLine("Non-interactive session - proceeding without confirmation.");
                 }
                 
                 Logger.Info("Starting complete Chocolatey reset");
