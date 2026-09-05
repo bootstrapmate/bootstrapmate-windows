@@ -883,6 +883,19 @@ namespace BootstrapMate
                 // Post a vendor-neutral run summary to the optional reporting endpoint.
                 await ReportManager.SendRunSummaryAsync(succeeded, runStartUtc, Version, manifestUrl);
 
+                // Close out the session log so session.json records how the run ended
+                // rather than staying at "running" forever.
+                Logger.WriteSessionSummary();
+
+                // Exit non-zero when packages failed. The registry already records the
+                // failure; without this the layer above - an Intune Win32 app result, a
+                // wrapping script, the scheduled task's Last Run Result - still reads green.
+                if (!succeeded)
+                {
+                    Logger.Warning("Run completed with package failures; exiting 2");
+                    return 2;
+                }
+
                 return 0;
             }
             catch (Exception ex)
@@ -925,6 +938,8 @@ namespace BootstrapMate
 
                 // Report the failed run too, so the fleet view reflects failures.
                 await ReportManager.SendRunSummaryAsync(false, runStartUtc, Version, manifestUrl);
+
+                Logger.WriteSessionSummary();
 
                 return 1;
             }
@@ -1544,6 +1559,12 @@ namespace BootstrapMate
                     : $"MSI installer failed with exit code: {process.ExitCode}";
                 throw new Exception(errorMsg);
             }
+
+            // Reaching here means every attempt ended in a launch failure (Process.Start
+            // returned null) rather than an installer exit code. Falling out quietly would
+            // report the package as installed when msiexec never ran.
+            throw new Exception(
+                $"MSI installer for {packageName} was never started: msiexec.exe could not be launched in {maxRetries} attempts.");
         }
 
         /// <summary>
