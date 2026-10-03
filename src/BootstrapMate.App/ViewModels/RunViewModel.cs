@@ -76,9 +76,8 @@ public partial class RunViewModel : ObservableObject
 
         // Snapshot existing log files before CLI creates a new one
         var logDir = BootstrapMateConstants.LogDirectory;
-        var existingLogs = Directory.Exists(logDir)
-            ? new HashSet<string>(Directory.GetFiles(logDir, "*.log"))
-            : new HashSet<string>();
+        var existingLogs = RunLogLocator.Snapshot(logDir);
+        var runStartUtc = DateTime.UtcNow;
 
         try
         {
@@ -104,7 +103,7 @@ public partial class RunViewModel : ObservableObject
             AppendLine($"[i] BootstrapMate started (PID: {_cliProcess.Id})", LogLevel.Info);
 
             // Tail the log file in background
-            var tailTask = TailLogFileAsync(logDir, existingLogs, _cts.Token);
+            var tailTask = TailLogFileAsync(logDir, existingLogs, runStartUtc, _cts.Token);
 
             await _cliProcess.WaitForExitAsync(_cts.Token);
             LastExitCode = _cliProcess.ExitCode;
@@ -183,20 +182,15 @@ public partial class RunViewModel : ObservableObject
 
     // ── Log File Tailer ────────────────────────────────────────────
 
-    private async Task TailLogFileAsync(string logDir, HashSet<string> existingLogs, CancellationToken ct)
+    private async Task TailLogFileAsync(string logDir, HashSet<string> existingLogs, DateTime runStartUtc, CancellationToken ct)
     {
-        // Wait for the CLI to create a new log file
+        // Wait for the CLI to create this run's log: its session's bootstrap.log, or a
+        // flat <timestamp>.log at the root when the session directory could not be made.
         string? logFile = null;
         for (int i = 0; i < 30 && !ct.IsCancellationRequested; i++)
         {
             await Task.Delay(500, ct);
-            if (!Directory.Exists(logDir)) continue;
-
-            logFile = Directory.GetFiles(logDir, "*.log")
-                .Where(f => !existingLogs.Contains(f))
-                .OrderByDescending(File.GetCreationTimeUtc)
-                .FirstOrDefault();
-
+            logFile = RunLogLocator.FindNewRunLog(logDir, existingLogs, runStartUtc);
             if (logFile is not null) break;
         }
 
@@ -206,7 +200,7 @@ public partial class RunViewModel : ObservableObject
             return;
         }
 
-        AppendLine($"[i] Tailing: {Path.GetFileName(logFile)}", LogLevel.Debug);
+        AppendLine($"[i] Tailing: {Path.GetRelativePath(logDir, logFile)}", LogLevel.Debug);
 
         long lastPosition = 0;
         while (!ct.IsCancellationRequested)
