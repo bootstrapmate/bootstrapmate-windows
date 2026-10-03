@@ -368,6 +368,11 @@ namespace BootstrapMate
         
         static async Task<int> MainAsync(string[] args)
         {
+            // Every process BootstrapMate starts inherits this, so a preflight can tell
+            // this build understands baseline mode before it returns that exit code.
+            Environment.SetEnvironmentVariable(Preflight.BaselineExitCodeVariable,
+                Preflight.BaselineExitCode.ToString());
+
             // Check for silent mode flag
             bool silentMode = args.Any(arg => arg.Equals("--silent", StringComparison.OrdinalIgnoreCase));
             
@@ -781,9 +786,6 @@ namespace BootstrapMate
             DateTime runStartUtc = DateTime.UtcNow;
             try
             {
-                // Suppress system sounds for silent installation experience
-                SuppressSystemSounds();
-                
                 // Clear cache if force download is requested
                 if (forceDownload)
                 {
@@ -832,8 +834,58 @@ namespace BootstrapMate
                     totalPackages += userlandCount.GetArrayLength();
                 }
                 
+                // Preflight runs before the dialog exists and before system sounds are
+                // muted: only a machine that is actually being provisioned gets a
+                // window, so a skipped or baseline run never puts one in front of a
+                // working user.
+                var decision = PreflightDecision.Provision;
+                if (root.TryGetProperty("preflight", out var preflightItems) &&
+                    preflightItems.ValueKind == JsonValueKind.Array &&
+                    preflightItems.GetArrayLength() > 0)
+                {
+                    decision = await RunPreflightStage(preflightItems);
+                }
+                else
+                {
+                    StatusManager.SetPhaseStatus(InstallationPhase.Preflight, InstallationStage.Skipped);
+                }
+
+                if (decision == PreflightDecision.Skip)
+                {
+                    Logger.WriteCompletion("Preflight chose Skip - nothing to do on this machine");
+                    StatusManager.SetPhaseStatus(InstallationPhase.SetupAssistant, InstallationStage.Skipped);
+                    StatusManager.SetPhaseStatus(InstallationPhase.Userland, InstallationStage.Skipped);
+                    StatusManager.WriteSuccessfulCompletionRegistry();
+                    await ReportManager.SendRunSummaryAsync(true, runStartUtc, Version, manifestUrl);
+                    Logger.WriteSessionSummary();
+                    return ExitSuccess;
+                }
+
+                if (decision == PreflightDecision.Failed)
+                {
+                    // A failed preflight gates every later stage, as on macOS.
+                    Logger.Error("Preflight failed - setupassistant and userland are skipped");
+                    Logger.WriteCompletion("BootstrapMate stopped: preflight failed");
+                    StatusManager.SetPhaseStatus(InstallationPhase.SetupAssistant, InstallationStage.Failed, "Preflight failed", 1);
+                    StatusManager.SetPhaseStatus(InstallationPhase.Userland, InstallationStage.Skipped);
+                    await ReportManager.SendRunSummaryAsync(false, runStartUtc, Version, manifestUrl);
+                    Logger.WriteSessionSummary();
+                    return ExitFailure;
+                }
+
+                bool baseline = decision == PreflightDecision.Baseline;
+                if (baseline)
+                {
+                    Logger.Info("Baseline mode: refreshing setupassistant items without a dialog; userland is skipped.");
+                }
+                else
+                {
+                    // Suppress system sounds for silent installation experience
+                    SuppressSystemSounds();
+                }
+
                 // Initialize dialog (gracefully degrades if not available)
-                if (!noDialog)
+                if (!noDialog && !baseline)
                 {
                     DialogManager.Instance.Initialize(
                         dialogTitle,
@@ -875,7 +927,7 @@ namespace BootstrapMate
                     
                     try
                     {
-                        var failed = await ProcessPackages(setupAssistant, "setupassistant", forceDownload);
+                        var failed = await ProcessPackages(setupAssistant, "setupassistant", forceDownload, baseline);
                         failedPackages.AddRange(failed);
                         if (failed.Count > 0)
                         {
@@ -904,8 +956,14 @@ namespace BootstrapMate
                     Logger.Debug("No Setup Assistant packages found - marked as skipped");
                 }
                 
-                // Process userland packages
-                if (root.TryGetProperty("userland", out var userland))
+                // Process userland packages. A baseline run lands on a machine someone
+                // is using, so the user-facing stage never runs there.
+                if (baseline)
+                {
+                    StatusManager.SetPhaseStatus(InstallationPhase.Userland, InstallationStage.Skipped);
+                    Logger.WriteSkipped("Userland stage (baseline mode)");
+                }
+                else if (root.TryGetProperty("userland", out var userland))
                 {
                     StatusManager.SetPhaseStatus(InstallationPhase.Userland, InstallationStage.Starting);
                     Logger.Debug("Processing Userland packages...");
@@ -1098,13 +1156,23 @@ namespace BootstrapMate
         /// in which every MSI was refused still recorded a clean success and
         /// Intune never retried it.
         /// </summary>
-        static async Task<List<string>> ProcessPackages(JsonElement packages, string phase, bool forceDownload = false)
+        static async Task<List<string>> ProcessPackages(JsonElement packages, string phase, bool forceDownload = false, bool baseline = false)
         {
             var failures = new List<string>();
             Logger.Debug($"Processing packages for phase: {phase}");
-            
-            // Convert JsonElement array to list for sorting
-            var packageList = packages.EnumerateArray().ToList();
+
+            // Convert JsonElement array to list for sorting. Items marked
+            // "baseline": false are left out of baseline runs.
+            var packageList = new List<JsonElement>();
+            foreach (var package in packages.EnumerateArray())
+            {
+                if (baseline && !Preflight.RunsInBaseline(package))
+                {
+                    Logger.WriteSkipped($"{PackageLabel(package)} (excluded from baseline)");
+                    continue;
+                }
+                packageList.Add(package);
+            }
             
             // Reorder packages to prevent race conditions:
             // 1. Install packages that might install tools (nupkg, msi, exe) first
@@ -1139,38 +1207,17 @@ namespace BootstrapMate
                     Logger.Debug($"Processing package: {displayName} (Type: {type}, File: {fileName})");
                     Logger.WriteProgress("Processing", displayName);
                     
-                    // Check architecture condition if specified
-                    if (package.TryGetProperty("condition", out var condition))
+                    if (SkipForArchitecture(package, displayName))
                     {
-                        var conditionStr = condition.GetString() ?? "";
-                        Logger.Debug($"Checking condition: {conditionStr}");
-                        
-                        // Get actual OS architecture - use OSArchitecture (not ProcessArchitecture) so that
-                        // the x64 binary running under ARM64 emulation still correctly detects ARM64.
-                        string actualArchitecture = System.Runtime.InteropServices.RuntimeInformation.OSArchitecture.ToString().ToUpperInvariant();
-                        Logger.Debug($"Detected OS architecture: {actualArchitecture}");
-                        
-                        // Skip x64 packages on non-x64 systems 
-                        // Note: RuntimeInformation reports "X64" for AMD64/Intel 64-bit, "ARM64" for ARM64
-                        if (conditionStr.Contains("architecture_x64") && actualArchitecture != "X64")
-                        {
-                            Logger.Debug($"Skipping {displayName} - x64 condition not met on {actualArchitecture} architecture");
-                            Logger.WriteSkipped($"Skipping - x64 condition not met on {actualArchitecture}");
-                            DialogManager.Instance.NotifyPackageSkipped(displayName, "Architecture mismatch");
-                            continue;
-                        }
-                        
-                        // Skip ARM64 packages on non-ARM64 systems
-                        if (conditionStr.Contains("architecture_arm64") && actualArchitecture != "ARM64")
-                        {
-                            Logger.Debug($"Skipping {displayName} - ARM64 condition not met on {actualArchitecture} architecture");
-                            Logger.WriteSkipped($"Skipping - ARM64 condition not met on {actualArchitecture}");
-                            DialogManager.Instance.NotifyPackageSkipped(displayName, "Architecture mismatch");
-                            continue;
-                        }
+                        DialogManager.Instance.NotifyPackageSkipped(displayName, "Architecture mismatch");
+                        continue;
                     }
-                    
-                    await DownloadAndInstallPackage(displayName, url, fileName, type, package, forceDownload);
+
+                    if (!await DownloadAndInstallPackage(displayName, url, fileName, type, package, forceDownload, baseline))
+                    {
+                        DialogManager.Instance.NotifyPackageSkipped(displayName, "Already installed");
+                        continue;
+                    }
                     Logger.Debug($"Successfully completed package: {displayName}");
                     Logger.WriteSuccess($"{displayName} installed successfully");
                     DialogManager.Instance.NotifyPackageSuccess(displayName);
@@ -1194,7 +1241,221 @@ namespace BootstrapMate
             return failures;
         }
         
-        static async Task DownloadAndInstallPackage(string displayName, string url, string fileName, string type, JsonElement packageInfo, bool forceDownload = false)
+        /// <summary>
+        /// True when the item's "condition" names an architecture other than this machine's.
+        /// </summary>
+        static bool SkipForArchitecture(JsonElement package, string displayName)
+        {
+            if (!package.TryGetProperty("condition", out var condition)) return false;
+
+            var conditionStr = condition.GetString() ?? "";
+            Logger.Debug($"Checking condition: {conditionStr}");
+
+            // Get actual OS architecture - use OSArchitecture (not ProcessArchitecture) so that
+            // the x64 binary running under ARM64 emulation still correctly detects ARM64.
+            string actualArchitecture = System.Runtime.InteropServices.RuntimeInformation.OSArchitecture.ToString().ToUpperInvariant();
+            Logger.Debug($"Detected OS architecture: {actualArchitecture}");
+
+            // Skip x64 packages on non-x64 systems
+            // Note: RuntimeInformation reports "X64" for AMD64/Intel 64-bit, "ARM64" for ARM64
+            if (conditionStr.Contains("architecture_x64") && actualArchitecture != "X64")
+            {
+                Logger.Debug($"Skipping {displayName} - x64 condition not met on {actualArchitecture} architecture");
+                Logger.WriteSkipped($"Skipping - x64 condition not met on {actualArchitecture}");
+                return true;
+            }
+
+            // Skip ARM64 packages on non-ARM64 systems
+            if (conditionStr.Contains("architecture_arm64") && actualArchitecture != "ARM64")
+            {
+                Logger.Debug($"Skipping {displayName} - ARM64 condition not met on {actualArchitecture} architecture");
+                Logger.WriteSkipped($"Skipping - ARM64 condition not met on {actualArchitecture}");
+                return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Runs the manifest's "preflight" scripts in manifest order, ahead of every other
+        /// stage and of the type-based reordering the later stages use. The first script
+        /// that returns Skip, Baseline or Failed decides the run; Provision moves on to the
+        /// next script, and Provision is the answer when every script returns it.
+        /// </summary>
+        static async Task<PreflightDecision> RunPreflightStage(JsonElement items)
+        {
+            Logger.WriteSection("Preflight Stage");
+            StatusManager.SetPhaseStatus(InstallationPhase.Preflight, InstallationStage.Running);
+
+            var (decision, exitCode, error) = await RunPreflightScripts(items);
+
+            // The Preflight record carries the deciding script's own exit code, so a
+            // reader can see which mode was chosen; Failed records it as a failure.
+            if (decision == PreflightDecision.Failed)
+                StatusManager.SetPhaseStatus(InstallationPhase.Preflight, InstallationStage.Failed, error, exitCode == 0 ? 1 : exitCode);
+            else
+                StatusManager.SetPhaseStatus(InstallationPhase.Preflight, InstallationStage.Completed, "", exitCode);
+
+            return decision;
+        }
+
+        static async Task<(PreflightDecision Decision, int ExitCode, string Error)> RunPreflightScripts(JsonElement items)
+        {
+            int lastExitCode = 1;
+            foreach (var item in items.EnumerateArray())
+            {
+                var displayName = PackageLabel(item);
+                var type = item.TryGetProperty("type", out var typeProp) ? typeProp.GetString() ?? "" : "";
+
+                // Preflight runs PowerShell scripts only. Name anything else rather than
+                // dropping it silently, so a mistyped manifest is visible in the log.
+                if (!type.Equals("ps1", StringComparison.OrdinalIgnoreCase) &&
+                    !type.Equals("powershell", StringComparison.OrdinalIgnoreCase))
+                {
+                    Logger.Warning($"Preflight item {displayName} has type '{type}'; only ps1 runs in preflight - ignored");
+                    continue;
+                }
+
+                if (SkipForArchitecture(item, displayName)) continue;
+
+                Logger.WriteProgress("Running preflight script", displayName);
+                string localPath;
+                try
+                {
+                    var url = item.GetProperty("url").GetString() ?? "";
+                    var fileName = item.GetProperty("file").GetString() ?? "";
+                    localPath = Path.Combine(GetCacheDirectory(), fileName);
+                    await DownloadFile(displayName, url, localPath);
+                }
+                catch (Exception ex)
+                {
+                    Logger.Error($"Failed to download preflight script {displayName}: {ex.Message}");
+                    return (PreflightDecision.Failed, 1, $"Download failed: {ex.Message}");
+                }
+
+                int exitCode;
+                try
+                {
+                    exitCode = await RunPowerShellScriptForExitCode(localPath, item);
+                }
+                catch (Exception ex)
+                {
+                    Logger.Error($"Preflight script {displayName} could not run: {ex.Message}");
+                    return (PreflightDecision.Failed, 1, ex.Message);
+                }
+                finally
+                {
+                    try { File.Delete(localPath); } catch { }
+                }
+
+                switch (Preflight.Decide(exitCode))
+                {
+                    case PreflightDecision.Skip:
+                        Logger.WriteSuccess($"Preflight script {displayName} exited 0 - skipping bootstrap");
+                        return (PreflightDecision.Skip, exitCode, "");
+                    case PreflightDecision.Baseline:
+                        Logger.WriteSuccess($"Preflight script {displayName} exited {exitCode} - running in baseline mode");
+                        return (PreflightDecision.Baseline, exitCode, "");
+                    case PreflightDecision.Provision:
+                        Logger.Info($"Preflight script {displayName} exited {exitCode} - continuing with bootstrap");
+                        lastExitCode = exitCode;
+                        break;
+                    default:
+                        Logger.Error($"Preflight script {displayName} failed with exit code {exitCode}");
+                        return (PreflightDecision.Failed, exitCode, $"Exit code: {exitCode}");
+                }
+            }
+
+            return (PreflightDecision.Provision, lastExitCode, "");
+        }
+
+        /// <summary>
+        /// Downloads <paramref name="url"/> to <paramref name="localPath"/>, replacing any
+        /// cached copy, with the policy Authorization header scoped to the manifest host.
+        /// </summary>
+        static async Task DownloadFile(string displayName, string url, string localPath)
+        {
+            // Always download fresh files - cache is only for inspection/debugging
+            // Delete existing cached file if present to ensure fresh download
+            if (File.Exists(localPath))
+            {
+                try
+                {
+                    File.Delete(localPath);
+                    Logger.Debug($"Deleted old cached file: {localPath}");
+                }
+                catch (Exception ex)
+                {
+                    Logger.Warning($"Could not delete old cached file {localPath}: {ex.Message}");
+                }
+            }
+
+            Logger.Debug($"Downloading {displayName} from: {url}");
+            Logger.WriteSubProgress("Downloading from", url);
+
+            using var httpClient = new HttpClient();
+            httpClient.DefaultRequestHeaders.Add("User-Agent", $"BootstrapMate/{Version}");
+            var authHeader = ConfigManager.Instance.Config.AuthorizationHeader;
+            if (!string.IsNullOrEmpty(authHeader))
+            {
+                // Scope the policy credential to the manifest host. Azure blob
+                // storage 403s public-blob requests carrying a foreign
+                // Authorization header, and third-party hosts must not see the
+                // org's token at all.
+                if (ShouldAttachAuthHeader(url))
+                    httpClient.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", authHeader);
+                else
+                    Logger.Debug($"Authorization header withheld for cross-host download: {url}");
+            }
+            using var response = await httpClient.GetAsync(url);
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new Exception($"Download failed: {response.StatusCode}");
+            }
+
+            // Ensure the file stream is completely closed before proceeding
+            {
+                await using var fileStream = File.Create(localPath);
+                await response.Content.CopyToAsync(fileStream);
+                await fileStream.FlushAsync();
+            } // fileStream is disposed here
+
+            // Add a small delay to ensure file handle is released
+            await Task.Delay(100);
+
+            var fileInfo = new FileInfo(localPath);
+            var sizeText = fileInfo.Length < 1024 * 1024
+                ? $"{fileInfo.Length / 1024.0:F1} KB"
+                : $"{fileInfo.Length / 1024.0 / 1024:F1} MB";
+            Logger.Debug($"Downloaded {displayName} to: {localPath} (Size: {sizeText})");
+            Logger.WriteSubProgress("Downloaded", sizeText);
+        }
+
+        /// <summary>
+        /// Why a baseline run can leave this file alone, or null when it must install it:
+        /// the same file is in the install ledger, or its MSI product is already
+        /// installed at this version or newer.
+        /// </summary>
+        static string? BaselineSkipReason(string localPath, string fileHash, string type)
+        {
+            if (new InstallLedger().Contains(fileHash))
+                return "this file was already installed by BootstrapMate";
+
+            if (type.Equals("msi", StringComparison.OrdinalIgnoreCase))
+            {
+                var product = MsiProduct.Read(localPath);
+                if (product is not null && MsiProduct.IsInstalledAtOrAbove(product, out var installed))
+                    return $"version {installed} is installed (package is {product.ProductVersion})";
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Downloads and installs one item. Returns false when a baseline run found it
+        /// already in place and left it alone.
+        /// </summary>
+        static async Task<bool> DownloadAndInstallPackage(string displayName, string url, string fileName, string type, JsonElement packageInfo, bool forceDownload = false, bool baseline = false)
         {
             // Create cache download directory (keeps failed installations for inspection)
             string cacheDir = GetCacheDirectory();
@@ -1202,70 +1463,27 @@ namespace BootstrapMate
             
             try
             {
-                
-                // Always download fresh files - cache is only for inspection/debugging
-                // Delete existing cached file if present to ensure fresh download
-                if (File.Exists(localPath))
-                {
-                    try
-                    {
-                        File.Delete(localPath);
-                        Logger.Debug($"Deleted old cached file: {localPath}");
-                    }
-                    catch (Exception ex)
-                    {
-                        Logger.Warning($"Could not delete old cached file {localPath}: {ex.Message}");
-                    }
-                }
-                
-                Logger.Debug($"Downloading {displayName} from: {url}");
-                Logger.WriteSubProgress("Downloading from", url);
                 DialogManager.Instance.NotifyDownloadStarted(displayName);
-                
-                using var httpClient = new HttpClient();
-                httpClient.DefaultRequestHeaders.Add("User-Agent", $"BootstrapMate/{Version}");
-                var authHeader = ConfigManager.Instance.Config.AuthorizationHeader;
-                if (!string.IsNullOrEmpty(authHeader))
+                await DownloadFile(displayName, url, localPath);
+
+                var fileHash = InstallLedger.ComputeSha256(localPath);
+
+                // Baseline repeats on a machine in use: never reinstall what is already there.
+                if (baseline && BaselineSkipReason(localPath, fileHash, type) is { } skipReason)
                 {
-                    // Scope the policy credential to the manifest host. Azure blob
-                    // storage 403s public-blob requests carrying a foreign
-                    // Authorization header, and third-party hosts must not see the
-                    // org's token at all.
-                    if (ShouldAttachAuthHeader(url))
-                        httpClient.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", authHeader);
-                    else
-                        Logger.Debug($"Authorization header withheld for cross-host download: {url}");
+                    Logger.WriteSkipped($"{displayName} - {skipReason}");
+                    try { File.Delete(localPath); } catch { }
+                    return false;
                 }
-                using var response = await httpClient.GetAsync(url);
-                if (!response.IsSuccessStatusCode)
-                {
-                    throw new Exception($"Download failed: {response.StatusCode}");
-                }
-                
-                // Ensure the file stream is completely closed before proceeding
-                {
-                    await using var fileStream = File.Create(localPath);
-                    await response.Content.CopyToAsync(fileStream);
-                    await fileStream.FlushAsync();
-                } // fileStream is disposed here
-                
-                // Add a small delay to ensure file handle is released
-                await Task.Delay(100);
-                
-                var fileInfo = new FileInfo(localPath);
-                var sizeText = fileInfo.Length < 1024 * 1024
-                    ? $"{fileInfo.Length / 1024.0:F1} KB"
-                    : $"{fileInfo.Length / 1024.0 / 1024:F1} MB";
-                Logger.Debug($"Downloaded {displayName} to: {localPath} (Size: {sizeText})");
-                Logger.WriteSubProgress("Downloaded", sizeText);
-                
+
                 // Install based on type
                 Logger.Debug($"Installing {displayName} using {type} installer...");
                 DialogManager.Instance.NotifyInstallStarted(displayName);
                 await InstallPackage(localPath, type, packageInfo);
                 
                 Logger.Debug($"Successfully installed: {displayName}");
-                
+                new InstallLedger().Record(fileHash, displayName);
+
                 // Delete the cached file after successful installation
                 try
                 {
@@ -1279,6 +1497,8 @@ namespace BootstrapMate
                 {
                     Logger.Warning($"Could not delete cached file after successful installation: {deleteEx.Message}");
                 }
+
+                return true;
             }
             catch (Exception ex)
             {
@@ -1422,6 +1642,15 @@ namespace BootstrapMate
 
         static async Task RunPowerShellScript(string scriptPath, JsonElement packageInfo)
         {
+            int exitCode = await RunPowerShellScriptForExitCode(scriptPath, packageInfo);
+            if (exitCode != 0)
+            {
+                throw new Exception($"PowerShell script failed with exit code: {exitCode}");
+            }
+        }
+
+        static async Task<int> RunPowerShellScriptForExitCode(string scriptPath, JsonElement packageInfo)
+        {
             var args = GetArguments(packageInfo);
             string arguments = $"-ExecutionPolicy Bypass -NoProfile -File \"{scriptPath}\" {string.Join(" ", args)}";
             
@@ -1470,12 +1699,10 @@ namespace BootstrapMate
                 }
                 
                 WriteLog($"PowerShell script completed with exit code: {process.ExitCode}");
-                
-                if (process.ExitCode != 0)
-                {
-                    throw new Exception($"PowerShell script failed with exit code: {process.ExitCode}");
-                }
+                return process.ExitCode;
             }
+
+            throw new Exception($"Could not start powershell.exe for {PackageLabel(packageInfo)}");
         }
         
         static bool RequiresElevation(string scriptPath, JsonElement packageInfo)

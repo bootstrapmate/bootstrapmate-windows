@@ -555,3 +555,6 @@ lcov.info
 *.trace
 IntuneWinAppUtil.exe
 installer/sbin-staging/installer.exe
+
+# Local worktrees
+/.worktrees/

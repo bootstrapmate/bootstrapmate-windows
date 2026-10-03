@@ -48,6 +48,7 @@ namespace BootstrapMate
         private int _errors;
         private int _warnings;
         private int _events;
+        private bool _finished;
 
         private SessionLog(string sessionDirectory, string sessionId, DateTime start, string runType, string version)
         {
@@ -111,6 +112,9 @@ namespace BootstrapMate
             var (eventType, status, text) = Classify(level, message);
             lock (_writeLock)
             {
+                // Lines can still arrive after the session closes (a late warning, an
+                // exception handler). The run's record is final by then; drop them.
+                if (_finished) return;
                 if (level == "ERROR") _errors++;
                 else if (level == "WARN") _warnings++;
                 _events++;
@@ -142,6 +146,11 @@ namespace BootstrapMate
         /// <summary>Rewrites session.json with the run's outcome.</summary>
         public void Finish(string? status = null, DateTime? end = null)
         {
+            lock (_writeLock)
+            {
+                if (_finished) return;
+                _finished = true;
+            }
             var finished = end ?? DateTime.Now;
             var resolved = status ?? (_errors > 0 ? "partial_failure" : "completed");
             WriteSessionFile(resolved, finished);

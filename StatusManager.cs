@@ -19,7 +19,9 @@ namespace BootstrapMate
     public enum InstallationPhase
     {
         SetupAssistant,
-        Userland
+        Userland,
+        // Last, so the numbers status.json already carries for the other phases hold.
+        Preflight
     }
 
     public class InstallationStatus
