@@ -104,19 +104,91 @@ script sees, so each outcome has its own value:
 Code 3 is deliberately distinct from 1: an unelevated `--silent` run installed
 nothing and is a configuration mistake, not a failed installation.
 
+## Preflight exit codes
+
+An optional top-level `preflight` array in the manifest runs before every other
+stage. Its items use the same schema as `setupassistant` (`name`, `file`, `url`,
+`arguments`, `type`) and must be PowerShell scripts (`ps1`). They run in manifest
+order, ahead of the type-based reordering the later stages use. The preflight
+script's exit code decides the rest of the run:
+
+| Exit code | Mode | What runs |
+|---|---|---|
+| `0` | Skip | Nothing. The run ends successfully. |
+| `2` | Baseline | `setupassistant` items, with no dialog, no `userland` stage and no reboot. |
+| any other positive | Provision | The full bootstrap: `setupassistant`, then `userland`. |
+| negative, or the script cannot be downloaded or started | Failed | Nothing further. The run exits `1`. |
+
+With several preflight scripts, the first to return Skip, Baseline or Failed
+decides; Provision moves on to the next one. A manifest without `preflight` runs
+the full bootstrap, as before.
+
+These are the preflight *script's* exit codes. They are separate from the CLI's own
+exit codes above: a baseline run that installs cleanly exits `0`.
+
+Baseline mode is for a machine that is already provisioned and in use. The daily
+Self-Heal task is how it reaches those machines: it brings the tooling in the
+manifest back to the published versions without provisioning the machine again.
+An MSI is skipped when its product (by ProductCode, or by UpgradeCode after a major
+upgrade) is installed at the package's ProductVersion or newer. BootstrapMate also
+keeps a ledger of the package files it has installed, by SHA-256 hash, in
+`C:\ProgramData\ManagedBootstrap\installed.json`, and a baseline run skips any file
+already in it. That covers scripts and EXEs, which register no product. A baseline
+run on a current machine installs nothing. An item leaves itself out of baseline
+runs with `"baseline": false`.
+
+Every process BootstrapMate starts runs with `BOOTSTRAPMATE_BASELINE_EXIT_CODE=2`
+in its environment. A preflight that may be run by an older build checks for it
+before asking for baseline, because a build without baseline mode treats exit `2`
+as Provision.
+
+The dialog opens, and system sounds are muted, only after the preflight has
+chosen Provision, so Skip and Baseline runs show nothing to the person at the
+machine. Unlike macOS there is no one-shot launcher to remove on Skip: the Windows
+launcher is the daily Self-Heal scheduled task, and it stays.
+
+```json
+{
+  "preflight": [
+    {
+      "name": "Preflight",
+      "file": "preflight.ps1",
+      "type": "ps1",
+      "url": "https://example.com/bootstrap/preflight.ps1",
+      "arguments": []
+    }
+  ],
+  "setupassistant": [],
+  "userland": []
+}
+```
+
 ## Registry Status Contract
 
 BootstrapMate tracks completion status in both 64-bit and 32-bit registry views:
 
 ```
 HKLM\SOFTWARE\BootstrapMate\LastRunVersion                    # Written only after successful completion
+HKLM\SOFTWARE\BootstrapMate\Status\Preflight
 HKLM\SOFTWARE\BootstrapMate\Status\SetupAssistant
 HKLM\SOFTWARE\BootstrapMate\Status\Userland
+HKLM\SOFTWARE\WOW6432Node\BootstrapMate\Status\Preflight
 HKLM\SOFTWARE\WOW6432Node\BootstrapMate\Status\SetupAssistant  
 HKLM\SOFTWARE\WOW6432Node\BootstrapMate\Status\Userland
 ```
 
 **Status Values**: `Starting`, `Running`, `Completed`, `Failed`, `Skipped`
+
+The same records are written to `C:\ProgramData\ManagedBootstrap\status.json`,
+keyed by phase name, where `Stage` and `Phase` are the enum numbers: Stage
+`0` Starting, `1` Running, `2` Completed, `3` Failed, `4` Skipped; Phase `0`
+SetupAssistant, `1` Userland, `2` Preflight.
+
+Every run writes a record for every phase. A phase the run did not execute is
+`Skipped` with `ExitCode` 0 and a fresh `CompletionTime`: SetupAssistant and
+Userland on a Skip run, Userland on a Baseline run, Preflight when the manifest has
+none. The Preflight record's `ExitCode` is the deciding script's exit code (0, 2 or
+the Provision code), so it shows which mode the run took.
 
 **Completion Registry Value** (written only after successful run):
 - `LastRunVersion`: BootstrapMate version that successfully completed (e.g., "2025.08.30.1300")

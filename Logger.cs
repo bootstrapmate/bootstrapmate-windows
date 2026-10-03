@@ -26,6 +26,7 @@ namespace BootstrapMate
         private static bool _silentMode = false;
         private static DateTime _sessionStartTime;
         private static TextWriter? _pipeWriter;
+        private static bool _sessionSummaryWritten;
 
         /// <summary>
         /// Sets an additional output writer (e.g. named pipe) that receives all log lines.
@@ -427,6 +428,10 @@ namespace BootstrapMate
         // Write session summary with total duration
         public static void WriteSessionSummary()
         {
+            // Once per run: the success path and an exception handler can both reach
+            // here, and a second summary would be appended to a closed session.
+            if (_sessionSummaryWritten) return;
+            _sessionSummaryWritten = true;
             var duration = GetSessionDuration();
             var timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
             WriteToFile(LogLevel.Info, $"=== BootstrapMate Session Ended === (Duration: {duration.TotalSeconds:F1}s)");
