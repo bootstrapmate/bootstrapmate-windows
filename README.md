@@ -208,12 +208,51 @@ most 1000 characters, made for an Intune remediation script's output column:
 When no run has been recorded it prints `no run recorded`. It always exits 0, needs
 no elevation and creates no session.
 
+`--status` works the same way. It only reads `HKLM\SOFTWARE\BootstrapMate` and
+`status.json`, so it runs for any user, opens no session and never prompts. An
+install run started without elevation and without an interactive console (a script,
+a remote shell, redirected input) exits `3` instead of waiting at the elevation
+prompt.
+
 ## Downloads
 
 Package downloads stream to disk with no overall HTTP timeout. An attempt fails when
-no data arrives for 60 seconds, or when it runs longer than 30 minutes. A stalled
-transfer, a network error or a 5xx response is retried up to three attempts in all,
-with 10- and 20-second waits between them. A 4xx response is not retried.
+no data arrives for `NetworkTimeout` seconds (default 120, range 10-600), or when it
+runs longer than 30 minutes. A stalled transfer, a network error or a 5xx response
+is retried up to three attempts in all, with 10- and 20-second waits between them. A
+4xx response is not retried. The manifest request uses the same `NetworkTimeout`.
+
+### Payload integrity
+
+When a manifest item carries `hash`, a SHA-256 hex digest (optionally prefixed with
+`sha256:`), the downloaded file must match it before it runs. A mismatch, or a `hash`
+that is not a SHA-256 digest, fails the item. This applies to every item type,
+preflight scripts included. Items without `hash` are not pinned; the log records
+the file's SHA-256 so it can be copied into the manifest.
+
+Chocolatey keeps its own checksum verification on. A `nupkg` item that genuinely
+needs it off sets `"ignoreChecksums": true`, and the run logs a warning when it does.
+
+### Which installer runs an MSI
+
+A Cimian-built MSI goes to sbin-installer, which runs the package's embedded scripts,
+with two exceptions that go to `msiexec /i … /qn /norestart`: an item that has
+`arguments` (those are msiexec arguments, and sbin-installer's command line takes
+none), and the sbin-installer package itself, under whatever name it is published.
+Third-party MSIs always use msiexec.
+
+## Settings that were removed
+
+`FollowRedirects` and `Reboot` were read from policy, the registry and the GUI, but
+nothing ever acted on them. They are removed from the configuration, the ADMX and
+the GUI. Redirects are always followed, and BootstrapMate never restarts the machine.
+A value still set for either is logged as a warning and otherwise ignored.
+
+`DryRun` is honoured by refusing to run, exactly like `--dry-run`: BootstrapMate has
+no simulated install, so a policy-set `DryRun` exits `1` without installing anything.
+`EnableDialog` set to false turns the dialog off, as `NoDialog` does. `DialogIcon`
+sets the dialog's icon. `SilentMode` and `VerboseMode` from policy or settings turn
+those modes on, and a CLI switch cannot turn them off.
 
 ## Registry Status Contract
 

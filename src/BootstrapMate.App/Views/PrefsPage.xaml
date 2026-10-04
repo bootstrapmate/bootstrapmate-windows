@@ -146,17 +146,6 @@
                         <TextBlock Text="Managed by Policy" Style="{StaticResource CaptionTextBlockStyle}"
                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                     </StackPanel>
-
-                    <!-- Follow Redirects -->
-                    <ToggleSwitch Margin="0,4,0,0" OnContent="Follow HTTP Redirects" OffContent="Follow HTTP Redirects"
-                                  IsOn="{x:Bind ViewModel.FollowRedirects, Mode=TwoWay}"
-                                  IsEnabled="{x:Bind ViewModel.IsFollowRedirectsLocked, Mode=OneWay, Converter={StaticResource InvertBool}}" />
-                    <StackPanel Orientation="Horizontal" Spacing="4"
-                                Visibility="{x:Bind ViewModel.IsFollowRedirectsLocked, Mode=OneWay, Converter={StaticResource BoolToVisibility}}">
-                        <FontIcon Glyph="&#xE72E;" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                        <TextBlock Text="Managed by Policy" Style="{StaticResource CaptionTextBlockStyle}"
-                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                    </StackPanel>
                 </StackPanel>
                 </Border>
 
@@ -170,16 +159,6 @@
                         <FontIcon Glyph="&#xE713;" FontSize="20"
                                   Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" VerticalAlignment="Center" />
                         <TextBlock Text="Behavior" Style="{StaticResource SubtitleTextBlockStyle}" VerticalAlignment="Center" />
-                    </StackPanel>
-
-                    <ToggleSwitch OnContent="Reboot after completion" OffContent="Reboot after completion"
-                                  IsOn="{x:Bind ViewModel.Reboot, Mode=TwoWay}"
-                                  IsEnabled="{x:Bind ViewModel.IsRebootLocked, Mode=OneWay, Converter={StaticResource InvertBool}}" />
-                    <StackPanel Orientation="Horizontal" Spacing="4"
-                                Visibility="{x:Bind ViewModel.IsRebootLocked, Mode=OneWay, Converter={StaticResource BoolToVisibility}}">
-                        <FontIcon Glyph="&#xE72E;" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                        <TextBlock Text="Managed by Policy" Style="{StaticResource CaptionTextBlockStyle}"
-                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                     </StackPanel>
 
                     <ToggleSwitch OnContent="Suppress console output" OffContent="Suppress console output"
@@ -202,7 +181,7 @@
                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                     </StackPanel>
 
-                    <ToggleSwitch OnContent="Dry run (no installs)" OffContent="Dry run (no installs)"
+                    <ToggleSwitch OnContent="Dry run (refuse to run)" OffContent="Dry run (refuse to run)"
                                   IsOn="{x:Bind ViewModel.DryRun, Mode=TwoWay}"
                                   IsEnabled="{x:Bind ViewModel.IsDryRunLocked, Mode=OneWay, Converter={StaticResource InvertBool}}" />
                     <StackPanel Orientation="Horizontal" Spacing="4"

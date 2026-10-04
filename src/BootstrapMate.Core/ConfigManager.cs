@@ -22,6 +22,18 @@ public sealed class ConfigManager
     /// <summary>Source that provided the manifest URL.</summary>
     public ConfigSource ManifestUrlSource { get; private set; } = ConfigSource.Default;
 
+    /// <summary>
+    /// Settings that were removed because nothing ever implemented them. A value still
+    /// set for one in policy or the registry is reported here so the run can say it is
+    /// ignored, instead of dropping it silently as it always did.
+    /// </summary>
+    // A property, not a field: Instance is built by an earlier static initializer and
+    // reads this while the class is still initializing.
+    public static string[] RetiredSettingNames => ["FollowRedirects", "Reboot"];
+
+    /// <summary>Retired settings still turned on somewhere, as "Name (where)". A saved false is ignored.</summary>
+    public List<string> RetiredSettingsPresent { get; } = new();
+
     private ConfigManager()
     {
         LoadManagementAndUserSettings();
@@ -41,8 +53,6 @@ public sealed class ConfigManager
     public void ApplyCliArguments(
         string? manifestUrl = null,
         string? authorizationHeader = null,
-        bool? followRedirects = null,
-        bool? reboot = null,
         bool? silentMode = null,
         bool? verboseMode = null,
         bool? dryRun = null,
@@ -63,10 +73,6 @@ public sealed class ConfigManager
         }
         if (!string.IsNullOrWhiteSpace(authorizationHeader))
             Config.AuthorizationHeader = authorizationHeader;
-        if (followRedirects.HasValue)
-            Config.FollowRedirects = followRedirects.Value;
-        if (reboot.HasValue)
-            Config.Reboot = reboot.Value;
         if (silentMode.HasValue)
             Config.SilentMode = silentMode.Value;
         if (verboseMode.HasValue)
@@ -146,8 +152,6 @@ public sealed class ConfigManager
         WriteString("ManifestUrl", settings.ManifestUrl);
         if (!string.IsNullOrEmpty(settings.AuthorizationHeader))
             WriteString("AuthorizationHeader", settings.AuthorizationHeader);
-        WriteBool("FollowRedirects", settings.FollowRedirects);
-        WriteBool("Reboot", settings.Reboot);
         WriteBool("SilentMode", settings.SilentMode);
         WriteBool("VerboseMode", settings.VerboseMode);
         WriteBool("DryRun", settings.DryRun);
@@ -171,6 +175,7 @@ public sealed class ConfigManager
     private void LoadManagementAndUserSettings()
     {
         var management = ManagementDetector.Instance;
+        RetiredSettingsPresent.Clear();
 
         // Lowest priority first: baked-in default → HKCU user → HKLM machine → CSP policy.
         // Higher-priority sources overwrite earlier ones; CLI runs last from caller.
@@ -197,11 +202,11 @@ public sealed class ConfigManager
         if (management.GetManagedString("AuthorizationHeader") is { Length: > 0 } auth)
             Config.AuthorizationHeader = auth;
 
-        if (management.GetManagedBool("FollowRedirects") is { } followRedirects)
-            Config.FollowRedirects = followRedirects;
-
-        if (management.GetManagedBool("Reboot") is { } reboot)
-            Config.Reboot = reboot;
+        foreach (var retired in RetiredSettingNames)
+        {
+            if (management.GetManagedBool(retired) == true)
+                RetiredSettingsPresent.Add($"{retired} (policy)");
+        }
 
         if (management.GetManagedBool("SilentMode") is { } silent)
             Config.SilentMode = silent;
@@ -281,8 +286,11 @@ public sealed class ConfigManager
             }
 
             Config.AuthorizationHeader = ReadString(settingsKey, "AuthorizationHeader") ?? Config.AuthorizationHeader;
-            Config.FollowRedirects = ReadBool(settingsKey, "FollowRedirects") ?? Config.FollowRedirects;
-            Config.Reboot = ReadBool(settingsKey, "Reboot") ?? Config.Reboot;
+            foreach (var retired in RetiredSettingNames)
+            {
+                if (ReadBool(settingsKey, retired) == true)
+                    RetiredSettingsPresent.Add($"{retired} ({hive} settings)");
+            }
             Config.SilentMode = ReadBool(settingsKey, "SilentMode") ?? Config.SilentMode;
             Config.VerboseMode = ReadBool(settingsKey, "VerboseMode") ?? Config.VerboseMode;
             Config.DryRun = ReadBool(settingsKey, "DryRun") ?? Config.DryRun;

@@ -38,17 +38,7 @@ Example: Bearer eyJhbGciOiJIUzI1NiIs...
 
 Leave empty if your manifest endpoint does not require authentication.</string>
 
-      <string id="FollowRedirects">Follow HTTP Redirects</string>
-      <string id="FollowRedirects_Help">When enabled, BootstrapMate will follow HTTP 301/302 redirects when downloading the manifest and packages.
-
-Default: Disabled</string>
-
       <!-- Behavior -->
-      <string id="Reboot">Reboot After Completion</string>
-      <string id="Reboot_Help">When enabled, the device will automatically reboot after all packages have been successfully installed.
-
-Default: Disabled</string>
-
       <string id="SilentMode">Silent Mode</string>
       <string id="SilentMode_Help">When enabled, all console output is suppressed. Log files are still written.
 
@@ -60,7 +50,7 @@ Default: Disabled</string>
 Default: Disabled</string>
 
       <string id="DryRun">Dry Run</string>
-      <string id="DryRun_Help">When enabled, BootstrapMate downloads and validates packages but does not actually install them. Useful for testing manifests.
+      <string id="DryRun_Help">When enabled, BootstrapMate refuses to run: it logs an error and exits with code 1 without downloading or installing anything. BootstrapMate has no simulated install, so this is a safety stop, not a test mode.
 
 Default: Disabled</string>
 
@@ -97,7 +87,7 @@ Default: Disabled</string>
 Default: C:\Program Files\BootstrapMate</string>
 
       <string id="NetworkTimeout">Network Timeout (seconds)</string>
-      <string id="NetworkTimeout_Help">Maximum time in seconds to wait for network operations (manifest download, package download).
+      <string id="NetworkTimeout_Help">Timeout in seconds for the manifest request, and how long a package download may go without receiving data before the attempt fails and is retried. A large package keeps downloading for as long as data keeps arriving.
 
 Range: 10–600 seconds
 Default: 120 seconds</string>
