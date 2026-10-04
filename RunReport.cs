@@ -21,7 +21,7 @@ namespace BootstrapMate
                 {
                     SessionId = Logger.GetSessionId() ?? "",
                     RunType = RunTypes.Provisioning,
-                    Status = "running",
+                    Status = RunStatuses.Running,
                     ToolVersion = version,
                     StartTime = Iso(Logger.SessionStartTime)
                 };
@@ -56,11 +56,12 @@ namespace BootstrapMate
 
         /// <summary>
         /// Closes the session log and records the outcome. Safe to call more than once;
-        /// only the first call writes.
+        /// only the first call writes. <paramref name="status"/> overrides the status the
+        /// session would derive from its error count.
         /// </summary>
-        public static void Finish()
+        public static void Finish(string? status = null)
         {
-            var outcome = Logger.WriteSessionSummary();
+            var outcome = Logger.WriteSessionSummary(status);
             if (outcome is null) return;
             lock (_lock)
             {

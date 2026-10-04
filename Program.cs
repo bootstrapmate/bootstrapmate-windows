@@ -880,7 +880,7 @@ namespace BootstrapMate
                     StatusManager.SetPhaseStatus(InstallationPhase.SetupAssistant, InstallationStage.Failed, "Preflight failed", 1);
                     StatusManager.SetPhaseStatus(InstallationPhase.Userland, InstallationStage.Skipped);
                     await ReportManager.SendRunSummaryAsync(false, runStartUtc, Version, manifestUrl);
-                    RunReport.Finish();
+                    RunReport.Finish(RunStatuses.Failed);
                     return ExitFailure;
                 }
 
@@ -1106,7 +1106,7 @@ namespace BootstrapMate
                 // Report the failed run too, so the fleet view reflects failures.
                 await ReportManager.SendRunSummaryAsync(false, runStartUtc, Version, manifestUrl);
 
-                RunReport.Finish();
+                RunReport.Finish(RunStatuses.Failed);
 
                 return 1;
             }

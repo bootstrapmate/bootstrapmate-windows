@@ -430,7 +430,7 @@ namespace BootstrapMate
 
         // Write session summary with total duration. Returns the outcome the first
         // time it runs, null after that.
-        public static SessionOutcome? WriteSessionSummary()
+        public static SessionOutcome? WriteSessionSummary(string? status = null)
         {
             // Once per run: the success path and an exception handler can both reach
             // here, and a second summary would be appended to a closed session.
@@ -442,8 +442,8 @@ namespace BootstrapMate
             WriteToFile(LogLevel.Info, $"Session End Time: {timestamp}");
             WriteToFile(LogLevel.Info, $"Total Session Duration: {duration.TotalMinutes:F2} minutes");
             var end = DateTime.Now;
-            var status = _session?.Finish(end: end) ?? "completed";
-            return new SessionOutcome(status, end, _session?.Errors ?? 0, _session?.Warnings ?? 0);
+            var resolved = _session?.Finish(status, end) ?? status ?? "completed";
+            return new SessionOutcome(resolved, end, _session?.Errors ?? 0, _session?.Warnings ?? 0);
         }
 
         /// <summary>Relabels the session with the mode the preflight chose.</summary>

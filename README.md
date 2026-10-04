@@ -171,8 +171,11 @@ the preflight has decided, it is rewritten with `skip`, `baseline` or
 
 `C:\ProgramData\ManagedBootstrap\last-run.json` holds the outcome of the most recent
 run. It is written atomically when the run starts, with status `running`, and
-again when the session closes. Its status values match `session.json`: `running`,
-`completed`, `partial_failure`.
+again when the session closes. At the start, `end_time` and `duration_seconds` are
+`null` and `items` is empty. Its status values match `session.json`: `running`,
+`completed`, `partial_failure` (some items failed), and `failed` (the preflight
+failed or the manifest would not load). The time in the `--last-run` line is UTC
+to the minute.
 
 ```json
 {
@@ -199,7 +202,7 @@ is cut to its first line, 200 characters at most.
 most 1000 characters, made for an Intune remediation script's output column:
 
 ```
-2026-10-04T03:04-07:00 baseline partial_failure v2026.10.04.1200 installed=0 skipped=1 failed=1: Example Tools: Download stalled: no data for 60 seconds
+2026-10-04T10:04Z baseline partial_failure v2026.10.04.1200 installed=0 skipped=1 failed=1: Example Tools: Download stalled: no data for 60 seconds
 ```
 
 When no run has been recorded it prints `no run recorded`. It always exits 0, needs

@@ -16,8 +16,11 @@ public sealed class LastRunRecord
     [JsonPropertyName("status")] public string Status { get; set; } = "running";
     [JsonPropertyName("tool_version")] public string ToolVersion { get; set; } = "";
     [JsonPropertyName("start_time")] public string StartTime { get; set; } = "";
-    [JsonPropertyName("end_time")] public string? EndTime { get; set; }
-    [JsonPropertyName("duration_seconds")] public int? DurationSeconds { get; set; }
+    // Written as null while the run is going, rather than left out.
+    [JsonPropertyName("end_time"), JsonIgnore(Condition = JsonIgnoreCondition.Never)]
+    public string? EndTime { get; set; }
+    [JsonPropertyName("duration_seconds"), JsonIgnore(Condition = JsonIgnoreCondition.Never)]
+    public int? DurationSeconds { get; set; }
     [JsonPropertyName("errors")] public int Errors { get; set; }
     [JsonPropertyName("warnings")] public int Warnings { get; set; }
     [JsonPropertyName("items")] public List<LastRunItem> Items { get; set; } = new();
@@ -45,6 +48,15 @@ public static class RunTypes
         // A failed preflight stays provisioning: the run was not given a mode.
         _ => Provisioning
     };
+}
+
+public static class RunStatuses
+{
+    public const string Running = "running";
+    public const string Completed = "completed";
+    public const string PartialFailure = "partial_failure";
+    /// <summary>The run could not do its work: a failed preflight, or a manifest that would not load.</summary>
+    public const string Failed = "failed";
 }
 
 public static class ItemResults
@@ -116,8 +128,8 @@ public static class LastRunFile
     /// <summary>
     /// One line for a remediation script's output:
     /// <c>&lt;time&gt; &lt;run_type&gt; &lt;status&gt; v&lt;version&gt; installed=N skipped=N failed=N[: name: error; ...]</c>.
-    /// The time is the run's end (its start while it is still running), ISO 8601 to
-    /// the minute with the UTC offset. Never longer than <see cref="MaxLineLength"/>.
+    /// The time is the run's end (its start while it is still running), in UTC, ISO 8601
+    /// to the minute: <c>2026-10-04T19:00Z</c>. Never longer than <see cref="MaxLineLength"/>.
     /// </summary>
     public static string FormatLine(LastRunRecord? record)
     {
@@ -125,7 +137,7 @@ public static class LastRunFile
 
         var stamp = record.EndTime ?? record.StartTime;
         var time = DateTimeOffset.TryParse(stamp, out var parsed)
-            ? parsed.ToString("yyyy-MM-ddTHH:mmzzz")
+            ? parsed.UtcDateTime.ToString("yyyy-MM-ddTHH:mm'Z'")
             : stamp;
 
         var installed = record.Items.Count(i => i.Result == ItemResults.Installed);

@@ -27,7 +27,7 @@ public class LastRunFormatTests
     {
         var line = LastRunFile.FormatLine(Record("completed",
             Item("A", ItemResults.Installed), Item("B", ItemResults.Skipped), Item("C", ItemResults.Skipped)));
-        Assert.Equal("2026-10-04T03:04-07:00 baseline completed v2026.10.04.1200 installed=1 skipped=2 failed=0", line);
+        Assert.Equal("2026-10-04T10:04Z baseline completed v2026.10.04.1200 installed=1 skipped=2 failed=0", line);
     }
 
     [Fact]
@@ -43,7 +43,7 @@ public class LastRunFormatTests
     {
         var record = Record("running");
         record.EndTime = null;
-        Assert.StartsWith("2026-10-04T03:00-07:00 baseline running ", LastRunFile.FormatLine(record));
+        Assert.StartsWith("2026-10-04T10:00Z baseline running ", LastRunFile.FormatLine(record));
     }
 
     [Fact]
@@ -110,6 +110,37 @@ public sealed class LastRunFileTests : IDisposable
         Assert.NotNull(back);
         Assert.Equal("baseline", back!.RunType);
         Assert.Single(back.Items);
+    }
+
+    [Fact]
+    public void ARunningRecordWritesNullEndTimeAndEmptyItems()
+    {
+        LastRunFile.Write(new LastRunRecord { SessionId = "s", Status = RunStatuses.Running }, FilePath);
+        using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(FilePath));
+        var root = doc.RootElement;
+        Assert.Equal("running", root.GetProperty("status").GetString());
+        Assert.Equal(System.Text.Json.JsonValueKind.Null, root.GetProperty("end_time").ValueKind);
+        Assert.Equal(0, root.GetProperty("items").GetArrayLength());
+    }
+
+    [Fact]
+    public void OnlyFailedItemsCarryAnErrorKey()
+    {
+        var record = new LastRunRecord
+        {
+            Status = RunStatuses.Failed,
+            Items =
+            {
+                new LastRunItem { Name = "A", Stage = "setupassistant", Result = ItemResults.Installed },
+                new LastRunItem { Name = "B", Stage = "setupassistant", Result = ItemResults.Failed, Error = "Download failed" }
+            }
+        };
+        LastRunFile.Write(record, FilePath);
+        using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(FilePath));
+        var items = doc.RootElement.GetProperty("items");
+        Assert.False(items[0].TryGetProperty("error", out _));
+        Assert.Equal("Download failed", items[1].GetProperty("error").GetString());
+        Assert.Equal("failed", doc.RootElement.GetProperty("status").GetString());
     }
 
     [Fact]
