@@ -425,20 +425,32 @@ namespace BootstrapMate
             return DateTime.Now - _sessionStartTime;
         }
 
-        // Write session summary with total duration
-        public static void WriteSessionSummary()
+        /// <summary>How a finished session ended, for the last-run record.</summary>
+        public sealed record SessionOutcome(string Status, DateTime End, int Errors, int Warnings);
+
+        // Write session summary with total duration. Returns the outcome the first
+        // time it runs, null after that.
+        public static SessionOutcome? WriteSessionSummary(string? status = null)
         {
             // Once per run: the success path and an exception handler can both reach
             // here, and a second summary would be appended to a closed session.
-            if (_sessionSummaryWritten) return;
+            if (_sessionSummaryWritten) return null;
             _sessionSummaryWritten = true;
             var duration = GetSessionDuration();
             var timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
             WriteToFile(LogLevel.Info, $"=== BootstrapMate Session Ended === (Duration: {duration.TotalSeconds:F1}s)");
             WriteToFile(LogLevel.Info, $"Session End Time: {timestamp}");
             WriteToFile(LogLevel.Info, $"Total Session Duration: {duration.TotalMinutes:F2} minutes");
-            _session?.Finish();
+            var end = DateTime.Now;
+            var resolved = _session?.Finish(status, end) ?? status ?? "completed";
+            return new SessionOutcome(resolved, end, _session?.Errors ?? 0, _session?.Warnings ?? 0);
         }
+
+        /// <summary>Relabels the session with the mode the preflight chose.</summary>
+        public static void SetRunType(string runType) => _session?.SetRunType(runType);
+
+        /// <summary>When this run's session started.</summary>
+        public static DateTime SessionStartTime => _sessionStartTime;
 
         /// <summary>The session id of the run in progress, when it has a session directory.</summary>
         public static string? GetSessionId() => _session?.SessionId;

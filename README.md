@@ -163,6 +163,58 @@ launcher is the daily Self-Heal scheduled task, and it stays.
 }
 ```
 
+## Last run
+
+Each session's `session.json` starts with `run_type` set to `provisioning`. Once
+the preflight has decided, it is rewritten with `skip`, `baseline` or
+`provisioning`. A failed preflight stays `provisioning`.
+
+`C:\ProgramData\ManagedBootstrap\last-run.json` holds the outcome of the most recent
+run. It is written atomically when the run starts, with status `running`, and
+again when the session closes. At the start, `end_time` and `duration_seconds` are
+`null` and `items` is empty. Its status values match `session.json`: `running`,
+`completed`, `partial_failure` (some items failed), and `failed` (the preflight
+failed or the manifest would not load). The time in the `--last-run` line is UTC
+to the minute.
+
+```json
+{
+  "session_id": "2026-10-04-030001",
+  "run_type": "baseline",
+  "status": "partial_failure",
+  "tool_version": "2026.10.04.1200",
+  "start_time": "2026-10-04T03:00:01.120-07:00",
+  "end_time": "2026-10-04T03:04:12.480-07:00",
+  "duration_seconds": 251,
+  "errors": 1,
+  "warnings": 0,
+  "items": [
+    { "name": "Example Agent", "stage": "setupassistant", "result": "skipped" },
+    { "name": "Example Tools", "stage": "setupassistant", "result": "failed", "error": "Download stalled: no data for 60 seconds" }
+  ]
+}
+```
+
+`result` is `installed`, `skipped` or `failed`. `error` is set only on failures and
+is cut to its first line, 200 characters at most.
+
+`managedbootstrapinstall.exe --last-run` prints that record as a single line of at
+most 1000 characters, made for an Intune remediation script's output column:
+
+```
+2026-10-04T10:04Z baseline partial_failure v2026.10.04.1200 installed=0 skipped=1 failed=1: Example Tools: Download stalled: no data for 60 seconds
+```
+
+When no run has been recorded it prints `no run recorded`. It always exits 0, needs
+no elevation and creates no session.
+
+## Downloads
+
+Package downloads stream to disk with no overall HTTP timeout. An attempt fails when
+no data arrives for 60 seconds, or when it runs longer than 30 minutes. A stalled
+transfer, a network error or a 5xx response is retried up to three attempts in all,
+with 10- and 20-second waits between them. A 4xx response is not retried.
+
 ## Registry Status Contract
 
 BootstrapMate tracks completion status in both 64-bit and 32-bit registry views:

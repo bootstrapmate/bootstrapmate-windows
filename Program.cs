@@ -229,6 +229,14 @@ namespace BootstrapMate
             // Only --version and -V mean version; lowercase -v is the verbose switch.
             // This is checked across every argument, not just args[0]: position must
             // never decide whether a switch prints a string or provisions the machine.
+            // --last-run is read by a remediation script: one line, no elevation, no
+            // session directory, and always exit 0 so the script decides the result.
+            if (args.Any(arg => arg.Equals("--last-run", StringComparison.OrdinalIgnoreCase)))
+            {
+                Console.WriteLine(LastRunFile.FormatLine(LastRunFile.Read()));
+                return ExitSuccess;
+            }
+
             if (args.Any(IsVersionSwitch))
             {
                 Console.WriteLine(Version);
@@ -462,6 +470,7 @@ namespace BootstrapMate
                         Console.WriteLine("  --help          Show this help message");
                         Console.WriteLine("  --version, -V   Show version information");
                         Console.WriteLine("  --status        Show current installation status");
+                        Console.WriteLine("  --last-run      Print a one-line summary of the last run (always exits 0)");
                         Console.WriteLine("  --clear-status  Clear all installation status data");
                         Console.WriteLine("  --clear-cache   Clear all caches including failed installation files (BootstrapMate + Chocolatey)");
                         Console.WriteLine("  --reset-chocolatey  Complete Chocolatey reset (removes corrupted lib folder)");
@@ -796,6 +805,7 @@ namespace BootstrapMate
 
                 // Initialize status tracking
                 StatusManager.Initialize(manifestUrl, Version);
+                RunReport.Start(Version);
                 Logger.Debug($"Initialized status tracking with RunId: {StatusManager.GetCurrentRunId()}");
 
                 Logger.Info($"Downloading manifest from: {manifestUrl}");
@@ -849,6 +859,7 @@ namespace BootstrapMate
                 {
                     StatusManager.SetPhaseStatus(InstallationPhase.Preflight, InstallationStage.Skipped);
                 }
+                RunReport.SetRunType(RunTypes.For(decision));
 
                 if (decision == PreflightDecision.Skip)
                 {
@@ -857,7 +868,7 @@ namespace BootstrapMate
                     StatusManager.SetPhaseStatus(InstallationPhase.Userland, InstallationStage.Skipped);
                     StatusManager.WriteSuccessfulCompletionRegistry();
                     await ReportManager.SendRunSummaryAsync(true, runStartUtc, Version, manifestUrl);
-                    Logger.WriteSessionSummary();
+                    RunReport.Finish();
                     return ExitSuccess;
                 }
 
@@ -869,7 +880,7 @@ namespace BootstrapMate
                     StatusManager.SetPhaseStatus(InstallationPhase.SetupAssistant, InstallationStage.Failed, "Preflight failed", 1);
                     StatusManager.SetPhaseStatus(InstallationPhase.Userland, InstallationStage.Skipped);
                     await ReportManager.SendRunSummaryAsync(false, runStartUtc, Version, manifestUrl);
-                    Logger.WriteSessionSummary();
+                    RunReport.Finish(RunStatuses.Failed);
                     return ExitFailure;
                 }
 
@@ -1041,7 +1052,7 @@ namespace BootstrapMate
 
                 // Close out the session log so session.json records how the run ended
                 // rather than staying at "running" forever.
-                Logger.WriteSessionSummary();
+                RunReport.Finish();
 
                 // Exit non-zero when packages failed. The registry already records the
                 // failure; without this the layer above - an Intune Win32 app result, a
@@ -1095,7 +1106,7 @@ namespace BootstrapMate
                 // Report the failed run too, so the fleet view reflects failures.
                 await ReportManager.SendRunSummaryAsync(false, runStartUtc, Version, manifestUrl);
 
-                Logger.WriteSessionSummary();
+                RunReport.Finish(RunStatuses.Failed);
 
                 return 1;
             }
@@ -1169,6 +1180,7 @@ namespace BootstrapMate
                 if (baseline && !Preflight.RunsInBaseline(package))
                 {
                     Logger.WriteSkipped($"{PackageLabel(package)} (excluded from baseline)");
+                    RunReport.Item(PackageLabel(package), phase, ItemResults.Skipped);
                     continue;
                 }
                 packageList.Add(package);
@@ -1210,17 +1222,20 @@ namespace BootstrapMate
                     if (SkipForArchitecture(package, displayName))
                     {
                         DialogManager.Instance.NotifyPackageSkipped(displayName, "Architecture mismatch");
+                        RunReport.Item(displayName, phase, ItemResults.Skipped);
                         continue;
                     }
 
                     if (!await DownloadAndInstallPackage(displayName, url, fileName, type, package, forceDownload, baseline))
                     {
                         DialogManager.Instance.NotifyPackageSkipped(displayName, "Already installed");
+                        RunReport.Item(displayName, phase, ItemResults.Skipped);
                         continue;
                     }
                     Logger.Debug($"Successfully completed package: {displayName}");
                     Logger.WriteSuccess($"{displayName} installed successfully");
                     DialogManager.Instance.NotifyPackageSuccess(displayName);
+                    RunReport.Item(displayName, phase, ItemResults.Installed);
                 }
                 catch (Exception ex)
                 {
@@ -1228,6 +1243,7 @@ namespace BootstrapMate
                     Logger.WriteError($"Failed to install package {displayName}: {ex.Message}");
                     DialogManager.Instance.NotifyPackageFailure(displayName, "Failed");
                     failures.Add(displayName);
+                    RunReport.Item(displayName, phase, ItemResults.Failed, ex.Message);
                     // Continue with next package instead of stopping entire process
                     // Note: We don't re-throw because we want to continue with other packages
                 }
@@ -1369,6 +1385,71 @@ namespace BootstrapMate
             return (PreflightDecision.Provision, lastExitCode, "");
         }
 
+        const int DownloadAttempts = 3;
+
+        // No bytes for this long means the transfer is dead, however large the file.
+        static readonly TimeSpan DownloadStallTimeout = TimeSpan.FromSeconds(60);
+
+        // Ceiling for one attempt, so a trickle that never quite stalls still ends.
+        static readonly TimeSpan DownloadAttemptCap = TimeSpan.FromMinutes(30);
+
+        sealed class DownloadStalledException : Exception
+        {
+            public DownloadStalledException(string message) : base(message) { }
+        }
+
+        /// <summary>
+        /// One attempt: streams the body to disk, failing when no bytes arrive for
+        /// <see cref="DownloadStallTimeout"/> or the attempt exceeds <see cref="DownloadAttemptCap"/>.
+        /// </summary>
+        static async Task DownloadOnce(HttpClient httpClient, string url, string localPath)
+        {
+            using var overall = new CancellationTokenSource(DownloadAttemptCap);
+            using var stall = CancellationTokenSource.CreateLinkedTokenSource(overall.Token);
+            stall.CancelAfter(DownloadStallTimeout);
+
+            try
+            {
+                using var response = await httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, stall.Token);
+                if (!response.IsSuccessStatusCode)
+                {
+                    throw new HttpRequestException($"Download failed: {response.StatusCode}", null, response.StatusCode);
+                }
+
+                await using var body = await response.Content.ReadAsStreamAsync(stall.Token);
+                // Ensure the file stream is completely closed before returning
+                await using var fileStream = File.Create(localPath);
+                var buffer = new byte[81920];
+                int read;
+                while ((read = await body.ReadAsync(buffer, stall.Token)) > 0)
+                {
+                    await fileStream.WriteAsync(buffer.AsMemory(0, read), stall.Token);
+                    stall.CancelAfter(DownloadStallTimeout);
+                }
+                await fileStream.FlushAsync();
+            }
+            catch (OperationCanceledException) when (overall.IsCancellationRequested)
+            {
+                throw new DownloadStalledException($"Download did not finish within {DownloadAttemptCap.TotalMinutes:F0} minutes");
+            }
+            catch (OperationCanceledException) when (stall.IsCancellationRequested)
+            {
+                throw new DownloadStalledException($"Download stalled: no data for {DownloadStallTimeout.TotalSeconds:F0} seconds");
+            }
+        }
+
+        /// <summary>
+        /// Network trouble and server-side errors are worth another attempt; a 4xx is not.
+        /// </summary>
+        static bool IsTransientDownloadFailure(Exception ex) => ex switch
+        {
+            DownloadStalledException => true,
+            HttpRequestException { StatusCode: { } code } => (int)code >= 500 || code == System.Net.HttpStatusCode.RequestTimeout,
+            HttpRequestException => true,
+            IOException => true,
+            _ => false
+        };
+
         /// <summary>
         /// Downloads <paramref name="url"/> to <paramref name="localPath"/>, replacing any
         /// cached copy, with the policy Authorization header scoped to the manifest host.
@@ -1393,7 +1474,11 @@ namespace BootstrapMate
             Logger.Debug($"Downloading {displayName} from: {url}");
             Logger.WriteSubProgress("Downloading from", url);
 
-            using var httpClient = new HttpClient();
+            // HttpClient's default 100-second Timeout covers the whole body, so a large
+            // MSI on a slow link was cancelled while it was still arriving. Bound the
+            // download by a stall timer and an overall cap instead, and retry a
+            // transient failure.
+            using var httpClient = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
             httpClient.DefaultRequestHeaders.Add("User-Agent", $"BootstrapMate/{Version}");
             var authHeader = ConfigManager.Instance.Config.AuthorizationHeader;
             if (!string.IsNullOrEmpty(authHeader))
@@ -1407,18 +1492,22 @@ namespace BootstrapMate
                 else
                     Logger.Debug($"Authorization header withheld for cross-host download: {url}");
             }
-            using var response = await httpClient.GetAsync(url);
-            if (!response.IsSuccessStatusCode)
-            {
-                throw new Exception($"Download failed: {response.StatusCode}");
-            }
 
-            // Ensure the file stream is completely closed before proceeding
+            for (int attempt = 1; ; attempt++)
             {
-                await using var fileStream = File.Create(localPath);
-                await response.Content.CopyToAsync(fileStream);
-                await fileStream.FlushAsync();
-            } // fileStream is disposed here
+                try
+                {
+                    await DownloadOnce(httpClient, url, localPath);
+                    break;
+                }
+                catch (Exception ex) when (attempt < DownloadAttempts && IsTransientDownloadFailure(ex))
+                {
+                    var delay = TimeSpan.FromSeconds(10 * attempt);
+                    Logger.Warning($"Download of {displayName} failed (attempt {attempt}/{DownloadAttempts}): {ex.Message} - retrying in {delay.TotalSeconds:F0}s");
+                    try { File.Delete(localPath); } catch { }
+                    await Task.Delay(delay);
+                }
+            }
 
             // Add a small delay to ensure file handle is released
             await Task.Delay(100);
