@@ -43,7 +43,7 @@
        than the harvester script's stack trace. -->
   <Target Name="GenerateGuiAppFiles"
           BeforeTargets="BeforeBuild"
-          Condition="Exists('$(AppDir)\BootstrapMate.exe')">
+          Condition="Exists('$(AppDir)\Managed Bootstrap Install.exe')">
     <MakeDir Directories="$(IntermediateOutputPath)" />
     <Exec Command="pwsh -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\Generate-GuiAppFiles.ps1&quot; -AppDir &quot;$(AppDir)&quot; -OutputPath &quot;$(IntermediateOutputPath)GuiAppFiles.wxs&quot;" />
     <ItemGroup>
@@ -54,8 +54,8 @@
   <Target Name="BeforeBuild">
     <Error Text="BootstrapMate executable not found at $(BinDir)\managedbootstrapinstall.exe. Please run build.ps1 first."
            Condition="!Exists('$(BinDir)\managedbootstrapinstall.exe')" />
-    <Error Text="BootstrapMate GUI app executable not found at $(AppDir)\BootstrapMate.exe. Run build.ps1 to publish the GUI before building the MSI."
-           Condition="!Exists('$(AppDir)\BootstrapMate.exe')" />
+    <Error Text="BootstrapMate GUI app executable not found at $(AppDir)\Managed Bootstrap Install.exe. Run build.ps1 to publish the GUI before building the MSI."
+           Condition="!Exists('$(AppDir)\Managed Bootstrap Install.exe')" />
   </Target>
 
 </Project>

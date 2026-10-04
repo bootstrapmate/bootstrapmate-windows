@@ -87,7 +87,7 @@ public sealed partial class RunPage : Page
         else
         {
             RunIcon.Glyph = "\uE768"; // Play icon
-            RunText.Text = "Run BootstrapMate";
+            RunText.Text = "Run Managed Bootstrap Install";
             RunButton.Background = null; // Reset to default
             RunningProgress.IsActive = false;
             RunningLabel.Visibility = Visibility.Collapsed;

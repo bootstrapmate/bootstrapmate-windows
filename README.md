@@ -814,7 +814,7 @@ Three projects. There is no Windows Service, and no test project yet:
 ```
 BootstrapMate.csproj        # CLI (managedbootstrapinstall.exe), sources at the repo root
 src/BootstrapMate.Core/     # Shared library (constants, signature verification, reporting)
-src/BootstrapMate.App/      # WinUI 3 GUI (BootstrapMate.exe), launches the CLI elevated
+src/BootstrapMate.App/      # WinUI 3 GUI (Managed Bootstrap Install.exe), launches the CLI elevated
 installer/                  # WiX MSI: runs the CLI at InstallFinalize, registers the self-heal task
 examples/                   # Example manifest and Intune detection scripts
 ```
