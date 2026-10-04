@@ -40,7 +40,7 @@ namespace BootstrapMate
         public string LogFilePath { get; }
 
         private readonly DateTime _startTime;
-        private readonly string _runType;
+        private string _runType;
         private readonly string _version;
         private readonly string _eventsPath;
         private readonly object _writeLock = new();
@@ -143,17 +143,37 @@ namespace BootstrapMate
             }
         }
 
-        /// <summary>Rewrites session.json with the run's outcome.</summary>
-        public void Finish(string? status = null, DateTime? end = null)
+        public DateTime StartTime => _startTime;
+        public string RunType => _runType;
+        public int Errors => _errors;
+        public int Warnings => _warnings;
+
+        /// <summary>
+        /// Relabels the run once the preflight has chosen its mode, and rewrites
+        /// session.json so a reader sees the mode while the run is still going.
+        /// </summary>
+        public void SetRunType(string runType)
         {
             lock (_writeLock)
             {
                 if (_finished) return;
+                _runType = runType;
+            }
+            WriteSessionFile("running");
+        }
+
+        /// <summary>Rewrites session.json with the run's outcome and returns the status written.</summary>
+        public string? Finish(string? status = null, DateTime? end = null)
+        {
+            lock (_writeLock)
+            {
+                if (_finished) return null;
                 _finished = true;
             }
             var finished = end ?? DateTime.Now;
             var resolved = status ?? (_errors > 0 ? "partial_failure" : "completed");
             WriteSessionFile(resolved, finished);
+            return resolved;
         }
 
         private void WriteSessionFile(string status, DateTime? end = null)
