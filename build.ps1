@@ -1311,7 +1311,7 @@ function Build-AppArchitecture {
             throw "dotnet publish failed for App with exit code: $LASTEXITCODE"
         }
 
-        $executablePath = Join-Path $outputDir "BootstrapMate.exe"
+        $executablePath = Join-Path $outputDir "Managed Bootstrap Install.exe"
 
         if (-not (Test-Path $executablePath)) {
             throw "Expected App executable not found: $executablePath"
@@ -2027,7 +2027,7 @@ try {
             Architecture = $arch
             Success = ($appSuccess -eq $true)
             Unsigned = ($appSuccess -eq "unsigned")
-            Path = "publish\app\$arch\BootstrapMate.exe"
+            Path = "publish\app\$arch\Managed Bootstrap Install.exe"
         }
     }
     

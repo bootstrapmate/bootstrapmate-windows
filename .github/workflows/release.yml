@@ -68,7 +68,7 @@ jobs:
           --self-contained true
           --verbosity minimal
 
-      - name: Build GUI App (BootstrapMate.exe)
+      - name: Build GUI App (Managed Bootstrap Install.exe)
         run: >
           dotnet publish src/BootstrapMate.App/BootstrapMate.App.csproj
           --configuration Release
@@ -175,7 +175,7 @@ jobs:
           $zipDir = Join-Path $env:RUNNER_TEMP "zip-$arch"
           New-Item -ItemType Directory -Path $zipDir -Force | Out-Null
           Copy-Item "publish/executables/$arch/managedbootstrapinstall.exe" $zipDir/
-          if (Test-Path "publish/app/$arch/BootstrapMate.exe") {
+          if (Test-Path "publish/app/$arch/Managed Bootstrap Install.exe") {
             Copy-Item "publish/app/$arch/*" $zipDir/ -Recurse
           }
           Compress-Archive -Path "$zipDir/*" -DestinationPath "$staging/BootstrapMate-$arch-$version.zip" -Force

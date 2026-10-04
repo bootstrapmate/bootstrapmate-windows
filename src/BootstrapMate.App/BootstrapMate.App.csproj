@@ -10,7 +10,10 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
     <RootNamespace>BootstrapMate.App</RootNamespace>
-    <AssemblyName>BootstrapMate</AssemblyName>
+    <AssemblyName>Managed Bootstrap Install</AssemblyName>
+    <Product>Managed Bootstrap Install</Product>
+    <Description>Managed Bootstrap Install</Description>
+    <ApplicationIcon>Assets\BootstrapMate.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <PublishSingleFile>false</PublishSingleFile>
     <SelfContained>true</SelfContained>
