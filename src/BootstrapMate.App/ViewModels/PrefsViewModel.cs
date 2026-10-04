@@ -18,11 +18,9 @@ public partial class PrefsViewModel : ObservableObject
     [ObservableProperty] private string _manifestUrl = "";
     [ObservableProperty] private string _authorizationHeader = "";
     [ObservableProperty] private bool _hasExistingAuth;
-    [ObservableProperty] private bool _followRedirects;
 
     // ── Behavior ─────────────────────────────────────────────────
 
-    [ObservableProperty] private bool _reboot;
     [ObservableProperty] private bool _silentMode;
     [ObservableProperty] private bool _verboseMode;
     [ObservableProperty] private bool _dryRun;
@@ -93,8 +91,6 @@ public partial class PrefsViewModel : ObservableObject
 
     public bool IsManifestUrlLocked => _managedKeys.Contains("ManifestUrl");
     public bool IsAuthHeaderLocked => _managedKeys.Contains("AuthorizationHeader");
-    public bool IsFollowRedirectsLocked => _managedKeys.Contains("FollowRedirects");
-    public bool IsRebootLocked => _managedKeys.Contains("Reboot");
     public bool IsSilentModeLocked => _managedKeys.Contains("SilentMode");
     public bool IsVerboseModeLocked => _managedKeys.Contains("VerboseMode");
     public bool IsDryRunLocked => _managedKeys.Contains("DryRun");
@@ -142,8 +138,6 @@ public partial class PrefsViewModel : ObservableObject
         ManifestUrl = config.ManifestUrl ?? "";
         HasExistingAuth = !string.IsNullOrEmpty(config.AuthorizationHeader);
         AuthorizationHeader = "";  // Don't display existing token — match Mac behavior
-        FollowRedirects = config.FollowRedirects;
-        Reboot = config.Reboot;
         SilentMode = config.SilentMode;
         VerboseMode = config.VerboseMode;
         DryRun = config.DryRun;
@@ -206,9 +200,7 @@ public partial class PrefsViewModel : ObservableObject
             args.Add(AuthorizationHeader);
         }
 
-        if (FollowRedirects) args.Add("--follow-redirects");
         if (DryRun) args.Add("--dry-run");
-        if (Reboot) args.Add("--reboot");
         if (SilentMode) args.Add("--silent");
         if (VerboseMode) args.Add("--verbose");
         if (!EnableDialog) args.Add("--no-dialog");
@@ -235,8 +227,6 @@ public partial class PrefsViewModel : ObservableObject
     {
         ManifestUrl = ManifestUrl,
         AuthorizationHeader = string.IsNullOrWhiteSpace(AuthorizationHeader) ? null : AuthorizationHeader,
-        FollowRedirects = FollowRedirects,
-        Reboot = Reboot,
         SilentMode = SilentMode,
         VerboseMode = VerboseMode,
         DryRun = DryRun,
@@ -272,8 +262,7 @@ public partial class PrefsViewModel : ObservableObject
 
         try
         {
-            var handler = new HttpClientHandler { AllowAutoRedirect = FollowRedirects };
-            using var client = new HttpClient(handler);
+            using var client = new HttpClient();
             client.Timeout = TimeSpan.FromSeconds(NetworkTimeout > 0 ? NetworkTimeout : 30);
 
             // Use the value the user has currently typed; fall back to the saved token.

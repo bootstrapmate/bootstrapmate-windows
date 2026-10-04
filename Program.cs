@@ -242,7 +242,15 @@ namespace BootstrapMate
                 Console.WriteLine(Version);
                 return ExitSuccess;
             }
-            
+
+            // --status only reads HKLM\SOFTWARE\BootstrapMate and status.json, which any
+            // user can read. Like --last-run it needs no elevation, opens no session and
+            // never prompts, so a script, a remote shell or a monitoring agent can call it.
+            if (args.Any(arg => arg.Equals("--status", StringComparison.OrdinalIgnoreCase)))
+            {
+                return ShowStatus();
+            }
+
             // Check for silent mode - suppress all console output
             bool silentMode = args.Any(arg => arg.Equals("--silent", StringComparison.OrdinalIgnoreCase));
             
@@ -250,8 +258,16 @@ namespace BootstrapMate
             bool verboseMode = args.Any(arg => arg.Equals("--verbose", StringComparison.OrdinalIgnoreCase) || 
                                               arg.Equals("-v", StringComparison.Ordinal));
             
+            // Policy or saved settings can turn either on; a CLI switch cannot turn them off.
+            silentMode |= ConfigManager.Instance.Config.SilentMode;
+            verboseMode |= ConfigManager.Instance.Config.VerboseMode;
+
             Logger.Initialize(LogDirectory, Version, verboseMode, silentMode);
             Logger.Debug("Main() called with arguments: " + string.Join(" ", args));
+            foreach (var retired in ConfigManager.Instance.RetiredSettingsPresent)
+            {
+                Logger.Warning($"Setting {retired} is ignored: it was never implemented and has been removed");
+            }
             
             // Check if running as administrator
             if (!IsRunningAsAdministrator())
@@ -265,7 +281,7 @@ namespace BootstrapMate
                     Console.WriteLine("   BootstrapMate requires elevated privileges to:");
                     Console.WriteLine("   • Install packages to Program Files");
                     Console.WriteLine("   • Write to HKLM registry keys");
-                    Console.WriteLine("   • Install Windows services");
+
                     Console.WriteLine("   • Manage system components");
                     Console.WriteLine();
                     Console.WriteLine("   Please run BootstrapMate as Administrator, or use:");
@@ -274,7 +290,16 @@ namespace BootstrapMate
                 }
                 
                 Logger.Info("BootstrapMate is not running as Administrator");
-                
+
+                // A caller with no console to answer from (a script, a remote shell, a
+                // redirected stdin) would hang on the prompt below. Fail fast instead.
+                if (!silentMode && (Console.IsInputRedirected || !Environment.UserInteractive))
+                {
+                    Logger.Error("Administrator privileges are required and there is no interactive console to ask. " +
+                                 $"Re-run from an elevated context. Exiting with code {ExitElevationRequired}.");
+                    return ExitElevationRequired;
+                }
+
                 if (!silentMode)
                 {
                     // Ask user if they want to restart as admin
@@ -696,6 +721,22 @@ namespace BootstrapMate
                 }
             }
 
+            // DryRun from policy or saved settings is honoured the way --dry-run is: there
+            // is no simulated install, so the only safe reading is to refuse to run.
+            if (ConfigManager.Instance.Config.DryRun)
+            {
+                Logger.Error("DryRun is set in policy or settings. BootstrapMate has no simulated install, so it is refusing to run rather than install for real.");
+                if (!silentMode)
+                    Console.WriteLine("ERROR: DryRun is set. Refusing to run - continuing would install for real.");
+                return ExitFailure;
+            }
+
+            // EnableDialog = false turns the dialog off just as NoDialog does.
+            if (!ConfigManager.Instance.Config.EnableDialog)
+            {
+                noDialog = true;
+            }
+
             // Process manifest if URL was provided
             if (!string.IsNullOrEmpty(manifestUrl))
             {
@@ -817,7 +858,7 @@ namespace BootstrapMate
                     ? manifestUri.Host
                     : null;
 
-                using var httpClient = new HttpClient();
+                using var httpClient = new HttpClient { Timeout = NetworkTimeout };
                 httpClient.DefaultRequestHeaders.Add("User-Agent", $"BootstrapMate/{Version}");
                 var authHeader = ConfigManager.Instance.Config.AuthorizationHeader;
                 if (!string.IsNullOrEmpty(authHeader))
@@ -902,7 +943,7 @@ namespace BootstrapMate
                         dialogTitle,
                         dialogMessage,
                         totalPackages,
-                        icon: null,
+                        icon: ConfigManager.Instance.Config.DialogIcon,
                         fullScreen: blurScreen,
                         kioskMode: false
                     );
@@ -1342,6 +1383,7 @@ namespace BootstrapMate
                     var fileName = item.GetProperty("file").GetString() ?? "";
                     localPath = Path.Combine(GetCacheDirectory(), fileName);
                     await DownloadFile(displayName, url, localPath);
+                    VerifyPayloadHash(displayName, item, InstallLedger.ComputeSha256(localPath));
                 }
                 catch (Exception ex)
                 {
@@ -1388,7 +1430,12 @@ namespace BootstrapMate
         const int DownloadAttempts = 3;
 
         // No bytes for this long means the transfer is dead, however large the file.
-        static readonly TimeSpan DownloadStallTimeout = TimeSpan.FromSeconds(60);
+        // Set by the NetworkTimeout setting (default 120 seconds).
+        static TimeSpan DownloadStallTimeout => NetworkTimeout;
+
+        /// <summary>The NetworkTimeout setting, clamped to the ADMX's 10-600 second range.</summary>
+        static TimeSpan NetworkTimeout =>
+            TimeSpan.FromSeconds(Math.Clamp(ConfigManager.Instance.Config.NetworkTimeout, 10, 600));
 
         // Ceiling for one attempt, so a trickle that never quite stalls still ends.
         static readonly TimeSpan DownloadAttemptCap = TimeSpan.FromMinutes(30);
@@ -1556,6 +1603,7 @@ namespace BootstrapMate
                 await DownloadFile(displayName, url, localPath);
 
                 var fileHash = InstallLedger.ComputeSha256(localPath);
+                VerifyPayloadHash(displayName, packageInfo, fileHash);
 
                 // Baseline repeats on a machine in use: never reinstall what is already there.
                 if (baseline && BaselineSkipReason(localPath, fileHash, type) is { } skipReason)
@@ -1620,9 +1668,14 @@ namespace BootstrapMate
                 case "msi":
                     // Cimian-built MSIs: prefer sbin-installer (handles embedded scripts natively)
                     // Third-party MSIs: always use msiexec.exe directly
+                    // (see InstallerRouting for why arguments and the sbin-installer
+                    // package itself always go to msiexec).
                     bool isCimianMsi = IsCimianBuiltMsi(filePath);
+                    bool sbinAvailable = isCimianMsi && IsSbinInstallerAvailable();
+                    var route = InstallerRouting.Choose(isCimianMsi, sbinAvailable, filePath,
+                        PackageLabel(packageInfo), GetArguments(packageInfo).Count);
 
-                    if (isCimianMsi && IsSbinInstallerAvailable())
+                    if (route == MsiInstaller.SbinInstaller)
                     {
                         Logger.Info($"Using sbin-installer for Cimian MSI: {Path.GetFileName(filePath)}");
                         await RunSbinInstall(filePath, packageInfo);
@@ -1630,7 +1683,10 @@ namespace BootstrapMate
                     else
                     {
                         if (isCimianMsi)
-                            Logger.Debug($"sbin-installer not available, falling back to msiexec for: {Path.GetFileName(filePath)}");
+                            Logger.Debug($"Using msiexec for Cimian MSI {Path.GetFileName(filePath)}: " +
+                                (!sbinAvailable ? "sbin-installer not available"
+                                 : InstallerRouting.IsSbinInstallerPackage(filePath, PackageLabel(packageInfo)) ? "it is sbin-installer itself"
+                                 : "the item carries msiexec arguments"));
                         await RunMsiInstaller(filePath, packageInfo);
                     }
                     break;
@@ -2258,7 +2314,7 @@ namespace BootstrapMate
             // Exclude known third-party MSIs that might contain the string
             // as a false positive from binary content.
             var fileName = Path.GetFileName(msiPath);
-            if (fileName.StartsWith("sbin-installer", StringComparison.OrdinalIgnoreCase))
+            if (InstallerRouting.IsSbinInstallerPackage(fileName, null))
             {
                 Logger.Debug($"Skipping Cimian check for known third-party MSI: {fileName}");
                 return false;
@@ -3113,14 +3169,19 @@ namespace BootstrapMate
             // Use proper chocolatey syntax with smart install/upgrade logic
             // Always use --force (-f) to handle conflicts and ensure package state
             // Add --no-progress, --quiet, and --limit-output to suppress sounds and visual feedback
+            // Chocolatey verifies the checksums of what a package downloads. That
+            // check stays on unless the item opts out with "ignoreChecksums": true.
+            string checksums = IgnoreChocolateyChecksums(packageInfo) ? "--ignore-checksums " : "";
+            if (checksums.Length > 0)
+                Logger.Warning($"{packageId}: Chocolatey checksum verification disabled by the item's ignoreChecksums");
             string arguments;
             if (!string.IsNullOrEmpty(packageVersion))
             {
-                arguments = $"{action} \"{packageId}\" --source=\"{packageDir}\" --version=\"{packageVersion}\" -y --ignore-checksums --acceptlicense --confirm --force --no-progress --quiet --limit-output {string.Join(" ", args)}";
+                arguments = $"{action} \"{packageId}\" --source=\"{packageDir}\" --version=\"{packageVersion}\" -y {checksums}--acceptlicense --confirm --force --no-progress --quiet --limit-output {string.Join(" ", args)}";
             }
             else
             {
-                arguments = $"{action} \"{packageId}\" --source=\"{packageDir}\" -y --ignore-checksums --acceptlicense --confirm --force --no-progress --quiet --limit-output {string.Join(" ", args)}";
+                arguments = $"{action} \"{packageId}\" --source=\"{packageDir}\" -y {checksums}--acceptlicense --confirm --force --no-progress --quiet --limit-output {string.Join(" ", args)}";
             }
 
             // Find chocolatey executable path using improved method
@@ -3342,6 +3403,34 @@ namespace BootstrapMate
             }
         }
         
+        /// <summary>
+        /// Fails the item when the manifest pins a SHA-256 <c>hash</c> the download does not
+        /// match. Without a hash there is nothing to check; that is logged, not refused.
+        /// </summary>
+        static void VerifyPayloadHash(string displayName, JsonElement packageInfo, string actualSha256)
+        {
+            string? expected = packageInfo.ValueKind == JsonValueKind.Object &&
+                packageInfo.TryGetProperty("hash", out var hashProp) && hashProp.ValueKind == JsonValueKind.String
+                ? hashProp.GetString()
+                : null;
+
+            if (string.IsNullOrWhiteSpace(expected))
+            {
+                Logger.Debug($"{displayName}: no manifest hash - payload integrity not pinned (SHA-256 {actualSha256})");
+                return;
+            }
+
+            if (PayloadIntegrity.Check(expected, actualSha256) is { } problem)
+                throw new Exception($"Refusing to install {displayName}: {problem}");
+
+            Logger.Debug($"{displayName}: SHA-256 matches the manifest hash");
+        }
+
+        static bool IgnoreChocolateyChecksums(JsonElement packageInfo) =>
+            packageInfo.ValueKind == JsonValueKind.Object &&
+            packageInfo.TryGetProperty("ignoreChecksums", out var flag) &&
+            flag.ValueKind == JsonValueKind.True;
+
         static List<string> GetArguments(JsonElement packageInfo)
         {
             var arguments = new List<string>();
@@ -3439,7 +3528,7 @@ namespace BootstrapMate
                 Console.WriteLine("  64-bit Status: HKLM\\SOFTWARE\\BootstrapMate\\Status");
                 Console.WriteLine("  32-bit Status: HKLM\\SOFTWARE\\WOW6432Node\\BootstrapMate\\Status");
                 Console.WriteLine();
-                Console.WriteLine("Status File: C:\\ProgramData\\BootstrapMate\\status.json");
+                Console.WriteLine("Status File: C:\\ProgramData\\ManagedBootstrap\\status.json");
 
                 return 0;
             }
@@ -3517,7 +3606,7 @@ namespace BootstrapMate
                 // Clear status file
                 try
                 {
-                    var statusFile = @"C:\ProgramData\BootstrapMate\status.json";
+                    var statusFile = @"C:\ProgramData\ManagedBootstrap\status.json";
                     if (File.Exists(statusFile))
                     {
                         File.Delete(statusFile);

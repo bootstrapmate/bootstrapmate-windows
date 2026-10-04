@@ -73,31 +73,9 @@
       </elements>
     </policy>
 
-    <policy name="FollowRedirects"
-            class="Machine"
-            displayName="$(string.FollowRedirects)"
-            explainText="$(string.FollowRedirects_Help)"
-            key="SOFTWARE\Policies\BootstrapMate"
-            valueName="FollowRedirects">
-      <parentCategory ref="Connection" />
-      <supportedOn ref="windows:SUPPORTED_Windows_10_0" />
-      <enabledValue><decimal value="1" /></enabledValue>
-      <disabledValue><decimal value="0" /></disabledValue>
-    </policy>
 
     <!-- ═══ Behavior ═══ -->
 
-    <policy name="Reboot"
-            class="Machine"
-            displayName="$(string.Reboot)"
-            explainText="$(string.Reboot_Help)"
-            key="SOFTWARE\Policies\BootstrapMate"
-            valueName="Reboot">
-      <parentCategory ref="Behavior" />
-      <supportedOn ref="windows:SUPPORTED_Windows_10_0" />
-      <enabledValue><decimal value="1" /></enabledValue>
-      <disabledValue><decimal value="0" /></disabledValue>
-    </policy>
 
     <policy name="SilentMode"
             class="Machine"

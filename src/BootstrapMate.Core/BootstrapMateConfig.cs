@@ -9,10 +9,8 @@ public sealed class BootstrapMateConfig
     // Connection
     public string? ManifestUrl { get; set; }
     public string? AuthorizationHeader { get; set; }
-    public bool FollowRedirects { get; set; }
 
-    // Behavior
-    public bool Reboot { get; set; }
+    // Behavior. DryRun is honoured by refusing to run: there is no simulated install.
     public bool SilentMode { get; set; }
     public bool VerboseMode { get; set; }
     public bool DryRun { get; set; }
@@ -35,6 +33,10 @@ public sealed class BootstrapMateConfig
 
     // Advanced
     public string? CustomInstallPath { get; set; }
+    /// <summary>
+    /// Seconds: the manifest request's timeout, and how long a package download may go
+    /// without receiving data before the attempt fails. Clamped to 10-600.
+    /// </summary>
     public int NetworkTimeout { get; set; } = BootstrapMateConstants.DefaultNetworkTimeout;
 
     /// <summary>Creates a deep copy of this configuration.</summary>
