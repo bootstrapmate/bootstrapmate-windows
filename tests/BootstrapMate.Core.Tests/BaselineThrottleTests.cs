@@ -7,15 +7,19 @@ public class BaselineThrottleTests
 {
     private static readonly DateTimeOffset Now = new(2026, 10, 5, 3, 0, 0, TimeSpan.FromHours(-7));
 
+    private const string V = "2026.10.05.1200";
+
     private static BaselineRecord Record(string status, double hoursAgo, int failures = 0) => new()
     {
         Status = status,
         EndTime = Now.AddHours(-hoursAgo).ToString("yyyy-MM-ddTHH:mm:ss.fffzzz"),
-        ConsecutiveFailures = failures
+        ConsecutiveFailures = failures,
+        ToolVersion = V,
+        AttemptVersion = V
     };
 
-    private static BaselineThrottle.Decision Eval(BaselineRecord? last, bool forced = false, int interval = 144) =>
-        BaselineThrottle.Evaluate(last, Now, interval, forced);
+    private static BaselineThrottle.Decision Eval(BaselineRecord? last, bool forced = false, int interval = 144, string version = V) =>
+        BaselineThrottle.Evaluate(last, Now, interval, forced, version);
 
     [Fact]
     public void AYoungCompletedBaselineSkips()
@@ -32,7 +36,6 @@ public class BaselineThrottleTests
     [Theory]
     [InlineData(RunStatuses.Failed)]
     [InlineData(RunStatuses.PartialFailure)]
-    [InlineData(RunStatuses.Interrupted)]
     public void AFirstFailureRetriesOnceAfter24Hours(string status)
     {
         Assert.True(Eval(Record(status, 23, failures: 1)).Skip);
@@ -43,8 +46,41 @@ public class BaselineThrottleTests
     public void OnceTheRetryIsUsedTheFullIntervalApplies()
     {
         Assert.True(Eval(Record(RunStatuses.Failed, 25, failures: 2)).Skip);
-        Assert.True(Eval(Record(RunStatuses.Interrupted, 143, failures: 5)).Skip);
+        Assert.True(Eval(Record(RunStatuses.PartialFailure, 143, failures: 5)).Skip);
         Assert.False(Eval(Record(RunStatuses.Failed, 145, failures: 2)).Skip);
+    }
+
+    [Fact]
+    public void AnInterruptedBaselineRetriesOnTheNextTrigger()
+    {
+        var d = Eval(Record(RunStatuses.Interrupted, 0.01, failures: 3));
+        Assert.False(d.Skip);
+        Assert.Contains("interrupted", d.Reason);
+    }
+
+    [Fact]
+    public void ANewBootstrapMateAlwaysGetsABaseline()
+    {
+        var d = Eval(Record(RunStatuses.Completed, 1), version: "2026.10.06.0900");
+        Assert.False(d.Skip);
+        Assert.Contains("2026.10.06.0900", d.Reason);
+    }
+
+    [Fact]
+    public void ARecordWithoutAVersionLetsTheNextBaselineRun()
+    {
+        var last = Record(RunStatuses.Completed, 1);
+        last.ToolVersion = null;
+        last.AttemptVersion = null;
+        Assert.False(Eval(last).Skip);
+    }
+
+    [Fact]
+    public void ANewBuildThatFailedItsBaselineWaitsLikeAnyOther()
+    {
+        var last = BaselineThrottle.After(Record(RunStatuses.Completed, 30), RunStatuses.Failed, Now.AddHours(-1), "2026.10.06.0900");
+        Assert.Equal(V, last.ToolVersion);
+        Assert.True(Eval(last, version: "2026.10.06.0900").Skip);
     }
 
     [Fact]
@@ -81,11 +117,15 @@ public class BaselineThrottleTests
     [Fact]
     public void FailuresCountUntilABaselineCompletes()
     {
-        var first = BaselineThrottle.After(null, RunStatuses.Failed, Now);
+        var first = BaselineThrottle.After(null, RunStatuses.Failed, Now, V);
         Assert.Equal(1, first.ConsecutiveFailures);
-        var second = BaselineThrottle.After(first, RunStatuses.Interrupted, Now);
+        var interrupted = BaselineThrottle.After(first, RunStatuses.Interrupted, Now, V);
+        Assert.Equal(1, interrupted.ConsecutiveFailures);
+        var second = BaselineThrottle.After(interrupted, RunStatuses.PartialFailure, Now, V);
         Assert.Equal(2, second.ConsecutiveFailures);
-        Assert.Equal(0, BaselineThrottle.After(second, RunStatuses.Completed, Now).ConsecutiveFailures);
+        var done = BaselineThrottle.After(second, RunStatuses.Completed, Now, V);
+        Assert.Equal(0, done.ConsecutiveFailures);
+        Assert.Equal(V, done.ToolVersion);
     }
 
     [Fact]

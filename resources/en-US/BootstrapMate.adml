@@ -87,7 +87,7 @@ Default: Disabled</string>
 Default: C:\Program Files\BootstrapMate</string>
 
       <string id="BaselineMinIntervalHours">Minimum Hours Between Baseline Runs</string>
-      <string id="BaselineMinIntervalHours_Help">A baseline run that starts less than this many hours after the last completed baseline exits as a skip before downloading anything. A failed, partially failed or interrupted baseline gets one retry after 24 hours, never sooner; if that retry fails too, the full interval applies. Provisioning runs are not limited. While C:\ProgramData\ManagedBootstrap\.bootstrap_force is present the limit does not apply; the preflight consumes the file.
+      <string id="BaselineMinIntervalHours_Help">A baseline run that starts less than this many hours after the last completed baseline exits as a skip before downloading anything. A new BootstrapMate version always gets a baseline. An interrupted baseline runs again at the next trigger. A failed or partially failed baseline gets one retry after 24 hours, never sooner; if that retry fails too, the full interval applies. Provisioning runs are not limited. While C:\ProgramData\ManagedBootstrap\.bootstrap_force is present the limit does not apply; the preflight consumes the file.
 
 Range: 0-8760 hours
 Default: 144 hours (6 days)</string>
