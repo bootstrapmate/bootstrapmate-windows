@@ -258,21 +258,27 @@ namespace BootstrapMate
             bool verboseMode = args.Any(arg => arg.Equals("--verbose", StringComparison.OrdinalIgnoreCase) || 
                                               arg.Equals("-v", StringComparison.Ordinal));
             
+            // Before anything is read from ProgramData\ManagedBootstrap: a standard user can
+            // create files under ProgramData, and this process trusts what it finds there.
+            // Before the configuration loads: stale 32-bit settings go, and credential
+            // headers move out of the user-readable policy and settings keys.
+            var startupNotes = new List<string>();
+            if (IsRunningAsAdministrator())
+            {
+                startupNotes.AddRange(DataDirectoryGuard.Secure().Select(n => $"Data directory: {n}"));
+                startupNotes.AddRange(LegacyRegistry.RemoveStaleWow64Settings());
+                startupNotes.AddRange(SecretStore.MigrateReadableCopies());
+            }
+
             // Policy or saved settings can turn either on; a CLI switch cannot turn them off.
             silentMode |= ConfigManager.Instance.Config.SilentMode;
             verboseMode |= ConfigManager.Instance.Config.VerboseMode;
 
-            // Before anything is read from ProgramData\ManagedBootstrap: a standard user can
-            // create files under ProgramData, and this process trusts what it finds there.
-            var dataDirectoryNotes = IsRunningAsAdministrator()
-                ? DataDirectoryGuard.Secure()
-                : new List<string>();
-
             Logger.Initialize(LogDirectory, Version, verboseMode, silentMode);
-            Logger.Debug("Main() called with arguments: " + string.Join(" ", args));
-            foreach (var note in dataDirectoryNotes)
+            Logger.Debug("Main() called with arguments: " + string.Join(" ", CommandLineRedaction.Redact(args)));
+            foreach (var note in startupNotes)
             {
-                Logger.Warning($"Data directory: {note}");
+                Logger.Warning(note);
             }
             foreach (var retired in ConfigManager.Instance.RetiredSettingsPresent)
             {

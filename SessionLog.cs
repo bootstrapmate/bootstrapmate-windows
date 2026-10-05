@@ -193,7 +193,7 @@ namespace BootstrapMate
                     ["os_version"] = System.Environment.OSVersion.ToString(),
                     ["user"] = System.Environment.UserName,
                     ["pid"] = System.Environment.ProcessId.ToString(),
-                    ["command_line"] = System.Environment.CommandLine
+                    ["command_line"] = BootstrapMate.Core.CommandLineRedaction.Redact(System.Environment.CommandLine)
                 },
                 Summary = new SessionSummary { Events = _events, Errors = _errors, Warnings = _warnings }
             };
