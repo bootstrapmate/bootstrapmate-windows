@@ -6,9 +6,12 @@ namespace BootstrapMate.Core;
 /// Configuration loader with fallback chain (highest → lowest priority):
 ///   1. CLI arguments
 ///   2. Intune CSP / Group Policy (HKLM\SOFTWARE\Policies\BootstrapMate)
-///   3. Machine settings (HKLM\SOFTWARE\BootstrapMate\Settings) — written by MSI / sysadmins
-///   4. User settings (HKCU\SOFTWARE\BootstrapMate\Settings) — written by the GUI app
-///   5. DefaultManifestUrl baked into the binary
+///   3. Machine settings (HKLM\SOFTWARE\BootstrapMate\Settings) — written by the MSI,
+///      by sysadmins, and by the GUI app when it runs elevated
+///   4. DefaultManifestUrl baked into the binary
+///
+/// There is deliberately no per-user settings source: every setting lives where only an
+/// administrator can change it.
 ///
 /// Mirrors macOS ConfigManager for cross-platform parity.
 /// </summary>
@@ -36,13 +39,13 @@ public sealed class ConfigManager
 
     private ConfigManager()
     {
-        LoadManagementAndUserSettings();
+        LoadManagementAndMachineSettings();
     }
 
     public enum ConfigSource
     {
         Default,
-        UserSettings,
+        MachineSettings,
         Management,
         CliArgument
     }
@@ -110,7 +113,7 @@ public sealed class ConfigManager
     public bool IsValid() => !string.IsNullOrWhiteSpace(Config.ManifestUrl);
 
     /// <summary>
-    /// Reload settings from management + user registry. Call when waiting for
+    /// Reload settings from management + machine registry. Call when waiting for
     /// Intune policy to land post-enrollment.
     /// Returns true if a valid manifest URL was found.
     /// </summary>
@@ -118,34 +121,43 @@ public sealed class ConfigManager
     {
         Config.ManifestUrl = null;
         ManifestUrlSource = ConfigSource.Default;
-        LoadManagementAndUserSettings();
+        LoadManagementAndMachineSettings();
         return IsValid();
     }
 
     /// <summary>
-    /// Save user-configured settings to HKCU\SOFTWARE\BootstrapMate\Settings.
+    /// Save settings to HKLM\SOFTWARE\BootstrapMate\Settings.
     /// Skips any key that is already managed (set via Group Policy / Intune).
-    /// Writes to the current user's hive, so no elevation is required.
+    /// Writing HKLM requires an elevated process; a non-elevated caller gets
+    /// UnauthorizedAccessException and nothing is written.
     /// </summary>
-    public static void SaveUserSettings(BootstrapMateConfig settings)
+    /// <param name="settings">Values to write.</param>
+    /// <param name="onlyKeys">
+    /// When given, only these keys are written, so a caller that edits a subset of settings
+    /// (the GUI Prefs tab) never overwrites the rest of the machine settings with defaults.
+    /// </param>
+    public static void SaveMachineSettings(BootstrapMateConfig settings, IReadOnlyCollection<string>? onlyKeys = null)
     {
         var management = ManagementDetector.Instance;
 
+        bool Skip(string key) => management.IsManaged(key) ||
+            (onlyKeys is not null && !onlyKeys.Contains(key, StringComparer.OrdinalIgnoreCase));
+
         void WriteString(string key, string? value)
         {
-            if (management.IsManaged(key)) return;
+            if (Skip(key)) return;
             WriteRegistryValue(key, value ?? string.Empty, RegistryValueKind.String);
         }
 
         void WriteBool(string key, bool value)
         {
-            if (management.IsManaged(key)) return;
+            if (Skip(key)) return;
             WriteRegistryValue(key, value ? 1 : 0, RegistryValueKind.DWord);
         }
 
         void WriteInt(string key, int value)
         {
-            if (management.IsManaged(key)) return;
+            if (Skip(key)) return;
             WriteRegistryValue(key, value, RegistryValueKind.DWord);
         }
 
@@ -173,12 +185,12 @@ public sealed class ConfigManager
 
     // ── Private ──────────────────────────────────────────────────────
 
-    private void LoadManagementAndUserSettings()
+    private void LoadManagementAndMachineSettings()
     {
         var management = ManagementDetector.Instance;
         RetiredSettingsPresent.Clear();
 
-        // Lowest priority first: baked-in default → HKCU user → HKLM machine → CSP policy.
+        // Lowest priority first: baked-in default → HKLM machine → CSP policy.
         // Higher-priority sources overwrite earlier ones; CLI runs last from caller.
         if (string.IsNullOrWhiteSpace(Config.ManifestUrl) &&
             !string.IsNullOrWhiteSpace(BootstrapMateConstants.DefaultManifestUrl))
@@ -187,7 +199,6 @@ public sealed class ConfigManager
             ManifestUrlSource = ConfigSource.Default;
         }
 
-        LoadFromUserRegistry();
         LoadFromMachineRegistry();
         LoadFromManagement(management);
     }
@@ -260,17 +271,12 @@ public sealed class ConfigManager
             Config.AllowUnsigned = allowUnsigned;
     }
 
-    private void LoadFromUserRegistry()
-    {
-        LoadFromHive(RegistryHive.CurrentUser, ConfigSource.UserSettings);
-    }
-
     private void LoadFromMachineRegistry()
     {
         // HKLM\SOFTWARE\BootstrapMate\Settings — read from both registry views so
         // a 32-bit MSI write is visible to the 64-bit binary and vice-versa.
-        LoadFromHive(RegistryHive.LocalMachine, ConfigSource.UserSettings, RegistryView.Registry64);
-        LoadFromHive(RegistryHive.LocalMachine, ConfigSource.UserSettings, RegistryView.Registry32);
+        LoadFromHive(RegistryHive.LocalMachine, ConfigSource.MachineSettings, RegistryView.Registry64);
+        LoadFromHive(RegistryHive.LocalMachine, ConfigSource.MachineSettings, RegistryView.Registry32);
     }
 
     private void LoadFromHive(RegistryHive hive, ConfigSource source, RegistryView view = RegistryView.Default)
@@ -349,9 +355,9 @@ public sealed class ConfigManager
 
     private static void WriteRegistryValue(string name, object value, RegistryValueKind kind)
     {
-        // Write to HKCU — no elevation required for user-owned settings
-        using var baseKey = RegistryKey.OpenBaseKey(RegistryHive.CurrentUser, RegistryView.Default);
-        using var settingsKey = baseKey.CreateSubKey(BootstrapMateConstants.SettingsRegistryPath, true);
+        // HKLM, 64-bit view: the location the MSI writes and every SYSTEM run reads.
+        using var baseKey = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
+        using var settingsKey = baseKey.CreateSubKey(BootstrapMateConstants.MachineSettingsRegistryPath, true);
         settingsKey.SetValue(name, value, kind);
     }
 }
