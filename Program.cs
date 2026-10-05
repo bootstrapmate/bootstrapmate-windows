@@ -490,8 +490,7 @@ namespace BootstrapMate
                         Console.WriteLine("  --dialog-title  Custom title for progress dialog");
                         Console.WriteLine("  --dialog-message  Custom message for progress dialog");
                         Console.WriteLine("  --pipe <name>   Named pipe for GUI output streaming");
-                        Console.WriteLine("  --save-settings Save GUI settings to registry");
-                        Console.WriteLine("  --save-settings-file <path>  Save settings from JSON file to registry");
+                        Console.WriteLine("  --save-settings Save settings to HKLM machine settings (administrator)");
                         Console.WriteLine("  --help          Show this help message");
                         Console.WriteLine("  --version, -V   Show version information");
                         Console.WriteLine("  --status        Show current installation status");
@@ -624,12 +623,6 @@ namespace BootstrapMate
                     case "--save-settings":
                         return SaveSettingsFromArgs(args);
 
-                    case "--save-settings-file":
-                        if (i + 1 < args.Length)
-                            return SaveSettingsFromFile(args[++i]);
-                        Console.WriteLine("ERROR: --save-settings-file requires a file path");
-                        return ExitFailure;
-
                     case "--headers":
                         // The GUI passes the authorization header this way. Consume the
                         // value - leaving it in place made the header string itself get
@@ -748,36 +741,7 @@ namespace BootstrapMate
         }
 
         /// <summary>
-        /// Saves settings from a JSON file. Called by the GUI app via elevated process.
-        /// </summary>
-        private static int SaveSettingsFromFile(string filePath)
-        {
-            try
-            {
-                var json = File.ReadAllText(filePath);
-                var config = System.Text.Json.JsonSerializer.Deserialize<BootstrapMateConfig>(json);
-                if (config is null)
-                {
-                    Logger.Error("Failed to deserialize settings file.");
-                    return 1;
-                }
-                ConfigManager.SaveUserSettings(config);
-                Logger.Info("Settings saved from file successfully.");
-                return 0;
-            }
-            catch (Exception ex)
-            {
-                Logger.Error($"Failed to save settings from file: {ex.Message}");
-                return 1;
-            }
-            finally
-            {
-                try { File.Delete(filePath); } catch { }
-            }
-        }
-
-        /// <summary>
-        /// Saves settings from CLI args to user registry. Called by the GUI app via elevated process.
+        /// Saves settings from CLI args to the HKLM machine settings key (requires administrator).
         /// Expected format: --save-settings --url X --dialog-title Y ...
         /// </summary>
         private static int SaveSettingsFromArgs(string[] args)
@@ -818,7 +782,7 @@ namespace BootstrapMate
 
             try
             {
-                ConfigManager.SaveUserSettings(config);
+                ConfigManager.SaveMachineSettings(config);
                 Logger.Info("Settings saved to registry successfully.");
                 return 0;
             }

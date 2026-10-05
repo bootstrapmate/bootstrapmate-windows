@@ -40,6 +40,46 @@
                            HorizontalAlignment="Center" />
             </StackPanel>
 
+            <!-- ═══ Read-only banner: settings live in HKLM, so editing needs elevation ═══ -->
+            <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                    BorderThickness="1" CornerRadius="8" Padding="16,12"
+                    Visibility="{x:Bind ViewModel.IsReadOnly, Mode=OneWay, Converter={StaticResource BoolToVisibility}}">
+                <StackPanel Spacing="6">
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <FontIcon Grid.Column="0" Glyph="&#xE72E;" FontSize="16" VerticalAlignment="Center"
+                                  Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <TextBlock Grid.Column="1" VerticalAlignment="Center" TextWrapping="WrapWholeWords"
+                                   Text="Settings are read-only. Unlock to change them (requires administrator)." />
+                        <Button Grid.Column="2" x:Name="UnlockButton" Click="UnlockButton_Click"
+                                ToolTipService.ToolTip="Relaunch as administrator to edit settings">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <FontIcon Glyph="&#xEA18;" FontSize="14" />
+                                <TextBlock Text="Unlock" />
+                            </StackPanel>
+                        </Button>
+                    </Grid>
+                    <TextBlock Text="{x:Bind ViewModel.UnlockError, Mode=OneWay}"
+                               Style="{StaticResource CaptionTextBlockStyle}"
+                               Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                               TextWrapping="Wrap"
+                               Visibility="{x:Bind ViewModel.HasUnlockError, Mode=OneWay, Converter={StaticResource BoolToVisibility}}" />
+                </StackPanel>
+            </Border>
+
+            <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center"
+                        Visibility="{x:Bind ViewModel.IsElevated, Mode=OneWay, Converter={StaticResource BoolToVisibility}}">
+                <FontIcon Glyph="&#xEA18;" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                <TextBlock Text="Running as administrator. Changes save to this device's machine settings."
+                           Style="{StaticResource CaptionTextBlockStyle}"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+            </StackPanel>
+
             <!-- ═══ Settings Grid: 2×2 card layout ═══ -->
             <Grid ColumnSpacing="16" RowSpacing="16">
                 <Grid.ColumnDefinitions>
@@ -73,7 +113,7 @@
                         <TextBox Grid.Column="0"
                                  Text="{x:Bind ViewModel.ManifestUrl, Mode=TwoWay}"
                                  PlaceholderText="https://example.com/bootstrapmate.json"
-                                 IsEnabled="{x:Bind ViewModel.IsManifestUrlLocked, Mode=OneWay, Converter={StaticResource InvertBool}}" />
+                                 IsEnabled="{x:Bind ViewModel.CanEditManifestUrl, Mode=OneWay}" />
                         <Button Grid.Column="1" x:Name="PreviewManifestButton"
                                 ToolTipService.ToolTip="Preview manifest content"
                                 Click="PreviewManifestButton_Click"
@@ -139,7 +179,7 @@
                     <TextBlock Text="Authorization Header" Style="{StaticResource CaptionTextBlockStyle}" Margin="0,4,0,0" />
                     <PasswordBox Password="{x:Bind ViewModel.AuthorizationHeader, Mode=TwoWay}"
                                  PlaceholderText="{x:Bind ViewModel.AuthPlaceholderText, Mode=OneWay}"
-                                 IsEnabled="{x:Bind ViewModel.IsAuthHeaderLocked, Mode=OneWay, Converter={StaticResource InvertBool}}" />
+                                 IsEnabled="{x:Bind ViewModel.CanEditAuthHeader, Mode=OneWay}" />
                     <StackPanel Orientation="Horizontal" Spacing="4"
                                 Visibility="{x:Bind ViewModel.IsAuthHeaderLocked, Mode=OneWay, Converter={StaticResource BoolToVisibility}}">
                         <FontIcon Glyph="&#xE72E;" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
@@ -163,7 +203,7 @@
 
                     <ToggleSwitch OnContent="Suppress console output" OffContent="Suppress console output"
                                   IsOn="{x:Bind ViewModel.SilentMode, Mode=TwoWay}"
-                                  IsEnabled="{x:Bind ViewModel.IsSilentModeLocked, Mode=OneWay, Converter={StaticResource InvertBool}}" />
+                                  IsEnabled="{x:Bind ViewModel.CanEditSilentMode, Mode=OneWay}" />
                     <StackPanel Orientation="Horizontal" Spacing="4"
                                 Visibility="{x:Bind ViewModel.IsSilentModeLocked, Mode=OneWay, Converter={StaticResource BoolToVisibility}}">
                         <FontIcon Glyph="&#xE72E;" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
@@ -173,7 +213,7 @@
 
                     <ToggleSwitch OnContent="Enable verbose logging" OffContent="Enable verbose logging"
                                   IsOn="{x:Bind ViewModel.VerboseMode, Mode=TwoWay}"
-                                  IsEnabled="{x:Bind ViewModel.IsVerboseModeLocked, Mode=OneWay, Converter={StaticResource InvertBool}}" />
+                                  IsEnabled="{x:Bind ViewModel.CanEditVerboseMode, Mode=OneWay}" />
                     <StackPanel Orientation="Horizontal" Spacing="4"
                                 Visibility="{x:Bind ViewModel.IsVerboseModeLocked, Mode=OneWay, Converter={StaticResource BoolToVisibility}}">
                         <FontIcon Glyph="&#xE72E;" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
@@ -183,7 +223,7 @@
 
                     <ToggleSwitch OnContent="Dry run (refuse to run)" OffContent="Dry run (refuse to run)"
                                   IsOn="{x:Bind ViewModel.DryRun, Mode=TwoWay}"
-                                  IsEnabled="{x:Bind ViewModel.IsDryRunLocked, Mode=OneWay, Converter={StaticResource InvertBool}}" />
+                                  IsEnabled="{x:Bind ViewModel.CanEditDryRun, Mode=OneWay}" />
                     <StackPanel Orientation="Horizontal" Spacing="4"
                                 Visibility="{x:Bind ViewModel.IsDryRunLocked, Mode=OneWay, Converter={StaticResource BoolToVisibility}}">
                         <FontIcon Glyph="&#xE72E;" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
@@ -207,7 +247,7 @@
 
                     <ToggleSwitch OnContent="Show progress dialog" OffContent="Show progress dialog"
                                   IsOn="{x:Bind ViewModel.EnableDialog, Mode=TwoWay}"
-                                  IsEnabled="{x:Bind ViewModel.IsEnableDialogLocked, Mode=OneWay, Converter={StaticResource InvertBool}}" />
+                                  IsEnabled="{x:Bind ViewModel.CanEditEnableDialog, Mode=OneWay}" />
                     <StackPanel Orientation="Horizontal" Spacing="4"
                                 Visibility="{x:Bind ViewModel.IsEnableDialogLocked, Mode=OneWay, Converter={StaticResource BoolToVisibility}}">
                         <FontIcon Glyph="&#xE72E;" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
@@ -216,16 +256,20 @@
                     </StackPanel>
 
                     <TextBlock Text="Title" Style="{StaticResource CaptionTextBlockStyle}" Margin="0,4,0,0" />
-                    <TextBox Text="{x:Bind ViewModel.DialogTitle, Mode=TwoWay}" PlaceholderText="Setting Up Your Device" />
+                    <TextBox Text="{x:Bind ViewModel.DialogTitle, Mode=TwoWay}" PlaceholderText="Setting Up Your Device"
+                             IsEnabled="{x:Bind ViewModel.CanEditDialogTitle, Mode=OneWay}" />
 
                     <TextBlock Text="Message" Style="{StaticResource CaptionTextBlockStyle}" Margin="0,4,0,0" />
-                    <TextBox Text="{x:Bind ViewModel.DialogMessage, Mode=TwoWay}" PlaceholderText="Please wait while we install required software..." />
+                    <TextBox Text="{x:Bind ViewModel.DialogMessage, Mode=TwoWay}" PlaceholderText="Please wait while we install required software..."
+                             IsEnabled="{x:Bind ViewModel.CanEditDialogMessage, Mode=OneWay}" />
 
                     <TextBlock Text="Icon" Style="{StaticResource CaptionTextBlockStyle}" Margin="0,4,0,0" />
-                    <TextBox Text="{x:Bind ViewModel.DialogIcon, Mode=TwoWay}" PlaceholderText="Path to icon file (.ico, .png)" />
+                    <TextBox Text="{x:Bind ViewModel.DialogIcon, Mode=TwoWay}" PlaceholderText="Path to icon file (.ico, .png)"
+                             IsEnabled="{x:Bind ViewModel.CanEditDialogIcon, Mode=OneWay}" />
 
                     <ToggleSwitch Margin="0,4,0,0" OnContent="Blur screen behind dialog" OffContent="Blur screen behind dialog"
-                                  IsOn="{x:Bind ViewModel.BlurScreen, Mode=TwoWay}" />
+                                  IsOn="{x:Bind ViewModel.BlurScreen, Mode=TwoWay}"
+                                  IsEnabled="{x:Bind ViewModel.CanEditBlurScreen, Mode=OneWay}" />
                 </StackPanel>
                 </Border>
 
@@ -244,7 +288,7 @@
                     <TextBlock Text="Custom Install Path" Style="{StaticResource CaptionTextBlockStyle}" />
                     <TextBox Text="{x:Bind ViewModel.CustomInstallPath, Mode=TwoWay}"
                              PlaceholderText="C:\Program Files\BootstrapMate"
-                             IsEnabled="{x:Bind ViewModel.IsCustomInstallPathLocked, Mode=OneWay, Converter={StaticResource InvertBool}}" />
+                             IsEnabled="{x:Bind ViewModel.CanEditCustomInstallPath, Mode=OneWay}" />
                     <StackPanel Orientation="Horizontal" Spacing="4"
                                 Visibility="{x:Bind ViewModel.IsCustomInstallPathLocked, Mode=OneWay, Converter={StaticResource BoolToVisibility}}">
                         <FontIcon Glyph="&#xE72E;" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
@@ -257,7 +301,7 @@
                         <NumberBox Value="{x:Bind ViewModel.NetworkTimeoutValue, Mode=TwoWay}" Minimum="10" Maximum="600"
                                    SpinButtonPlacementMode="Compact" SmallChange="10"
                                    Width="120"
-                                   IsEnabled="{x:Bind ViewModel.IsNetworkTimeoutLocked, Mode=OneWay, Converter={StaticResource InvertBool}}" />
+                                   IsEnabled="{x:Bind ViewModel.CanEditNetworkTimeout, Mode=OneWay}" />
                         <TextBlock Text="seconds" VerticalAlignment="Center"
                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                     </StackPanel>

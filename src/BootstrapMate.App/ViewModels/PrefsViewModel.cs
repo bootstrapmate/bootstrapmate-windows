@@ -6,7 +6,9 @@ namespace BootstrapMate.App.ViewModels;
 
 /// <summary>
 /// ViewModel for the Prefs tab. Mirrors macOS SettingsViewModel.
-/// Loads from ConfigManager, saves non-managed settings to the user registry (HKCU), shows management lock state.
+/// Loads from ConfigManager and shows management lock state. Settings live in HKLM, so the tab is
+/// read-only unless this process is elevated; Unlock relaunches the app elevated on this tab.
+/// When elevated, non-managed settings auto-save to HKLM through ConfigManager.SaveMachineSettings.
 /// </summary>
 public partial class PrefsViewModel : ObservableObject
 {
@@ -89,6 +91,67 @@ public partial class PrefsViewModel : ObservableObject
 
     // ── Policy Lock Properties (for x:Bind) ─────────────────────
 
+    // ── Elevation State ─────────────────────────────────────────
+
+    /// <summary>True when this process can write HKLM (elevated administrator token).</summary>
+    public bool IsElevated { get; } = PrefsElevation.IsProcessElevated();
+
+    public bool IsReadOnly => !IsElevated;
+
+    [ObservableProperty] private string _unlockError = "";
+
+    public bool HasUnlockError => !string.IsNullOrEmpty(UnlockError);
+
+    partial void OnUnlockErrorChanged(string value) => OnPropertyChanged(nameof(HasUnlockError));
+
+    /// <summary>
+    /// Relaunches this app elevated through UAC, opening on the Prefs tab. Returns true when the
+    /// elevated instance started, so the caller can close this one. A cancelled UAC prompt
+    /// returns false quietly and leaves the tab read-only.
+    /// </summary>
+    public bool TryRelaunchElevated()
+    {
+        UnlockError = "";
+        try
+        {
+            var exe = Environment.ProcessPath;
+            if (string.IsNullOrEmpty(exe))
+            {
+                UnlockError = "Could not find the app's own executable to relaunch.";
+                return false;
+            }
+
+            using var process = System.Diagnostics.Process.Start(PrefsElevation.BuildElevatedRelaunch(exe));
+            return process is not null;
+        }
+        catch (Exception ex) when (PrefsElevation.IsElevationCancelled(ex))
+        {
+            return false;
+        }
+        catch (Exception ex)
+        {
+            UnlockError = $"Could not relaunch as administrator: {ex.Message}";
+            return false;
+        }
+    }
+
+    // ── Editability (elevated and not managed by policy) ────────
+
+    private bool CanEdit(string key) => PrefsElevation.CanEdit(IsElevated, _managedKeys.Contains(key));
+
+    public bool CanEditManifestUrl => CanEdit("ManifestUrl");
+    public bool CanEditAuthHeader => CanEdit("AuthorizationHeader");
+    public bool CanEditSilentMode => CanEdit("SilentMode");
+    public bool CanEditVerboseMode => CanEdit("VerboseMode");
+    public bool CanEditDryRun => CanEdit("DryRun");
+    public bool CanEditEnableDialog => CanEdit("EnableDialog");
+    public bool CanEditDialogTitle => CanEdit("DialogTitle");
+    public bool CanEditDialogMessage => CanEdit("DialogMessage");
+    public bool CanEditDialogIcon => CanEdit("DialogIcon");
+    public bool CanEditBlurScreen => CanEdit("BlurScreen");
+    public bool CanEditCustomInstallPath => CanEdit("CustomInstallPath");
+    public bool CanEditNetworkTimeout => CanEdit("NetworkTimeout");
+
     public bool IsManifestUrlLocked => _managedKeys.Contains("ManifestUrl");
     public bool IsAuthHeaderLocked => _managedKeys.Contains("AuthorizationHeader");
     public bool IsSilentModeLocked => _managedKeys.Contains("SilentMode");
@@ -164,6 +227,7 @@ public partial class PrefsViewModel : ObservableObject
         nameof(AuthPlaceholderText), nameof(NetworkTimeoutValue), nameof(VersionDisplay),
         nameof(IsManifestPreviewLoading), nameof(ManifestPreviewContent), nameof(ManifestPreviewError),
         nameof(HasManifestPreviewContent), nameof(HasManifestPreviewError),
+        nameof(UnlockError), nameof(HasUnlockError),
         "", // string.Empty from Load's bulk notify
     ];
 
@@ -171,13 +235,14 @@ public partial class PrefsViewModel : ObservableObject
     {
         base.OnPropertyChanged(e);
 
-        if (_isLoading || _nonSettingProperties.Contains(e.PropertyName ?? ""))
+        // Not elevated: HKLM is not writable and the tab is read-only, so never save.
+        if (_isLoading || !IsElevated || _nonSettingProperties.Contains(e.PropertyName ?? ""))
             return;
 
         _autoSaveTimer?.Dispose();
         _autoSaveTimer = new System.Threading.Timer(_ =>
         {
-            try { ConfigManager.SaveUserSettings(BuildConfig()); } catch { }
+            try { ConfigManager.SaveMachineSettings(BuildConfig(), PageKeys); } catch { }
         }, null, 500, System.Threading.Timeout.Infinite);
     }
 
@@ -222,6 +287,17 @@ public partial class PrefsViewModel : ObservableObject
     }
 
     // ── Private ──────────────────────────────────────────────────
+
+    /// <summary>
+    /// The machine settings this tab edits. Saving writes only these, so values the tab does not
+    /// show (reporting, signature checks, baseline interval) keep whatever HKLM already holds.
+    /// </summary>
+    private static readonly string[] PageKeys =
+    [
+        "ManifestUrl", "AuthorizationHeader", "SilentMode", "VerboseMode", "DryRun",
+        "EnableDialog", "NoDialog", "DialogTitle", "DialogMessage", "DialogIcon", "BlurScreen",
+        "CustomInstallPath", "NetworkTimeout",
+    ];
 
     private BootstrapMateConfig BuildConfig() => new()
     {
