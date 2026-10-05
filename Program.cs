@@ -262,8 +262,18 @@ namespace BootstrapMate
             silentMode |= ConfigManager.Instance.Config.SilentMode;
             verboseMode |= ConfigManager.Instance.Config.VerboseMode;
 
+            // Before anything is read from ProgramData\ManagedBootstrap: a standard user can
+            // create files under ProgramData, and this process trusts what it finds there.
+            var dataDirectoryNotes = IsRunningAsAdministrator()
+                ? DataDirectoryGuard.Secure()
+                : new List<string>();
+
             Logger.Initialize(LogDirectory, Version, verboseMode, silentMode);
             Logger.Debug("Main() called with arguments: " + string.Join(" ", args));
+            foreach (var note in dataDirectoryNotes)
+            {
+                Logger.Warning($"Data directory: {note}");
+            }
             foreach (var retired in ConfigManager.Instance.RetiredSettingsPresent)
             {
                 Logger.Warning($"Setting {retired} is ignored: it was never implemented and has been removed");
@@ -936,7 +946,7 @@ namespace BootstrapMate
                     // never limited. The manifest and preflight are small; a throttled run
                     // downloads no item.
                     var throttle = BaselineThrottle.Evaluate(BaselineThrottle.Read(), DateTimeOffset.Now,
-                        ConfigManager.Instance.Config.BaselineMinIntervalHours, forced);
+                        ConfigManager.Instance.Config.BaselineMinIntervalHours, forced, Version);
                     if (throttle.Skip)
                     {
                         Logger.WriteSkipped($"Baseline throttle: skipping this run: {throttle.Reason}");

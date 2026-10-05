@@ -222,13 +222,16 @@ prompt.
 Every baseline run downloads from the package host, so baselines are rate-limited.
 The check runs only after the preflight has chosen baseline, so provisioning is never
 limited. It reads `C:\ProgramData\ManagedBootstrap\baseline.json`, which holds the
-last baseline's `end_time`, `status` and `consecutive_failures`. `last-run.json`
+last baseline's `end_time`, `status`, `consecutive_failures`, the version that last
+completed one (`tool_version`) and the version that last tried (`attempt_version`). `last-run.json`
 cannot hold the clock, because every run rewrites it.
 
 | Last baseline | Next baseline |
 |---|---|
+| Completed by another BootstrapMate version, and this version has not tried one | Runs |
+| Interrupted (the run never recorded its end) | Runs at the next trigger |
 | Completed less than `BaselineMinIntervalHours` ago (default 144) | Skips |
-| Failed, partially failed or interrupted for the first time | One retry after 24 hours, never sooner |
+| Failed or partially failed for the first time | One retry after 24 hours, never sooner |
 | Failed again after that retry | Waits the full interval |
 | None: a provisioning run clears the record | Runs |
 | Any, with `C:\ProgramData\ManagedBootstrap\.bootstrap_force` present | Runs; the preflight consumes the file |
@@ -236,7 +239,8 @@ cannot hold the clock, because every run rewrites it.
 A throttled run fetches the manifest and runs the preflight, then downloads nothing.
 It logs why, ends as `skip`, records SetupAssistant and Userland as `Skipped` in
 `status.json`, and leaves `baseline.json` alone. `--force` does not bypass the
-throttle. `BaselineMinIntervalHours` comes from policy or the settings registry
+throttle, and BootstrapMate never relaunches itself: a retry comes only from the next
+normal trigger (the Intune install or the daily Self-Heal task). `BaselineMinIntervalHours` comes from policy or the settings registry
 (0-8760; 0 disables the limit for completed runs).
 
 A baseline run also skips an item without downloading it when the manifest says

@@ -80,6 +80,23 @@
       <RegistryValue Root="HKLM" Key="SOFTWARE\BootstrapMate" Name="LastRunVersion" Value="$(var.FullVersion)" Type="string" />
     </Component>
 
+    <!-- ProgramData\ManagedBootstrap holds what the SYSTEM run acts on: the force file,
+         cached installers, the ledger and run records. ProgramData lets any user create
+         files below it, so the folder gets its own ACL, not inherited: owner SYSTEM,
+         SYSTEM and Administrators full control, Users read. The CLI resets the same ACL
+         and removes anything a non-administrator created before every run. Permanent,
+         so an uninstall keeps the logs and records. -->
+    <StandardDirectory Id="CommonAppDataFolder">
+      <Directory Id="ManagedBootstrapDataDir" Name="ManagedBootstrap" />
+    </StandardDirectory>
+    <Component Id="DataDirectoryAcl" Directory="ManagedBootstrapDataDir" Permanent="yes"
+               Guid="7B2E4C1D-9A3F-4E58-B6D7-1C0F2A9E8B34">
+      <CreateFolder>
+        <PermissionEx Sddl="O:SYG:SYD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)" />
+      </CreateFolder>
+      <RegistryValue Root="HKLM" Key="SOFTWARE\BootstrapMate" Name="DataDirectoryAcl" Value="1" Type="integer" KeyPath="yes" />
+    </Component>
+
     <!-- Machine-level fallback settings: ConfigManager reads HKLM\SOFTWARE\BootstrapMate\Settings
          when no CSP policy is present. CSP at HKLM\SOFTWARE\Policies\BootstrapMate still overrides. -->
     <Component Id="MachineSettings" Directory="INSTALLDIR" Guid="C1F2B3A4-D5E6-4789-9012-A1B2C3D4E5F6">
@@ -155,6 +172,7 @@
       <ComponentGroupRef Id="GuiAppFiles" />
       <ComponentRef Id="RegistryEntries" />
       <ComponentRef Id="MachineSettings" />
+      <ComponentRef Id="DataDirectoryAcl" />
       <ComponentRef Id="SetPathComponent" />
       <ComponentRef Id="StartMenuShortcut" />
       <ComponentRef Id="LegacyStartMenuCleanup" />

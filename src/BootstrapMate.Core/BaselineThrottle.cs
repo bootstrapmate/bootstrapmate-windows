@@ -13,6 +13,10 @@ public sealed class BaselineRecord
     [JsonPropertyName("end_time")] public string EndTime { get; set; } = "";
     [JsonPropertyName("status")] public string Status { get; set; } = "";
     [JsonPropertyName("consecutive_failures")] public int ConsecutiveFailures { get; set; }
+    /// <summary>The BootstrapMate version of the last completed baseline.</summary>
+    [JsonPropertyName("tool_version")] public string? ToolVersion { get; set; }
+    /// <summary>The BootstrapMate version of the last baseline, whatever its outcome.</summary>
+    [JsonPropertyName("attempt_version")] public string? AttemptVersion { get; set; }
 }
 
 /// <summary>
@@ -26,9 +30,14 @@ public sealed class BaselineRecord
 /// <item>The <c>.bootstrap_force</c> file in ProgramData\ManagedBootstrap: run. The throttle
 /// only looks; the preflight consumes it.</item>
 /// <item>No record: run. A provisioning run clears the record.</item>
+/// <item>This BootstrapMate is not the version that completed the last baseline, and has not
+/// tried one yet: run. A new build always gets a baseline, whatever the interval; once it has
+/// tried and failed, the failure rules below apply to it.</item>
+/// <item>Last baseline was interrupted (it never recorded its end): run. The retry comes from
+/// the next normal trigger; BootstrapMate never relaunches itself.</item>
 /// <item>Last baseline completed less than <c>BaselineMinIntervalHours</c> ago (default 144): skip.</item>
-/// <item>Last baseline failed, partially failed or was interrupted: one retry after 24 hours;
-/// if that retry fails too, the full interval applies again.</item>
+/// <item>Last baseline failed or partially failed: one retry after 24 hours; if that retry
+/// fails too, the full interval applies again.</item>
 /// </list>
 /// A throttled run leaves the record alone, so the last real baseline stays the reference.
 /// </remarks>
@@ -42,10 +51,18 @@ public static class BaselineThrottle
 
     public sealed record Decision(bool Skip, string Reason);
 
-    public static Decision Evaluate(BaselineRecord? last, DateTimeOffset now, int minIntervalHours, bool forced)
+    public static Decision Evaluate(BaselineRecord? last, DateTimeOffset now, int minIntervalHours, bool forced, string currentVersion)
     {
         if (forced) return new(false, $"{ForceFilePath} is present");
         if (last is null) return new(false, "no baseline recorded");
+        if (!string.Equals(last.ToolVersion ?? "", currentVersion, StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(last.AttemptVersion ?? "", currentVersion, StringComparison.OrdinalIgnoreCase))
+        {
+            var was = string.IsNullOrEmpty(last.ToolVersion) ? "an unrecorded version" : $"v{last.ToolVersion}";
+            return new(false, $"BootstrapMate v{currentVersion} has not completed a baseline (last completed by {was})");
+        }
+        if (string.Equals(last.Status, RunStatuses.Interrupted, StringComparison.OrdinalIgnoreCase))
+            return new(false, "last baseline was interrupted");
         if (!DateTimeOffset.TryParse(last.EndTime, out var when))
             return new(false, "last baseline has no readable time");
 
@@ -68,15 +85,26 @@ public static class BaselineThrottle
         return new(false, $"last baseline {last.Status} {age.TotalHours:F1}h ago (limit {wait.TotalHours:F0}h)");
     }
 
-    /// <summary>The record a finished baseline leaves, counting failures in a row.</summary>
-    public static BaselineRecord After(BaselineRecord? previous, string status, DateTimeOffset end) => new()
+    /// <summary>
+    /// The record a baseline leaves. Failures and partial failures count in a row; an
+    /// interruption is not counted, since the run never got to fail. The version is the
+    /// one that last completed a baseline.
+    /// </summary>
+    public static BaselineRecord After(BaselineRecord? previous, string status, DateTimeOffset end, string version)
     {
-        EndTime = end.ToString("yyyy-MM-ddTHH:mm:ss.fffzzz"),
-        Status = status,
-        ConsecutiveFailures = string.Equals(status, RunStatuses.Completed, StringComparison.OrdinalIgnoreCase)
-            ? 0
-            : (previous?.ConsecutiveFailures ?? 0) + 1
-    };
+        bool completed = string.Equals(status, RunStatuses.Completed, StringComparison.OrdinalIgnoreCase);
+        bool interrupted = string.Equals(status, RunStatuses.Interrupted, StringComparison.OrdinalIgnoreCase);
+        return new()
+        {
+            EndTime = end.ToString("yyyy-MM-ddTHH:mm:ss.fffzzz"),
+            Status = status,
+            ConsecutiveFailures = completed ? 0
+                : interrupted ? previous?.ConsecutiveFailures ?? 0
+                : (previous?.ConsecutiveFailures ?? 0) + 1,
+            ToolVersion = completed ? version : previous?.ToolVersion,
+            AttemptVersion = version
+        };
+    }
 
     private static readonly JsonSerializerOptions WriteOptions = new() { WriteIndented = true };
 
