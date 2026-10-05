@@ -57,6 +57,11 @@ public static class RunStatuses
     public const string PartialFailure = "partial_failure";
     /// <summary>The run could not do its work: a failed preflight, or a manifest that would not load.</summary>
     public const string Failed = "failed";
+    /// <summary>
+    /// The run died without recording its end (a reboot, a killed process, an MSI upgrade).
+    /// Set by the next run, which finds the record still at <see cref="Running"/>.
+    /// </summary>
+    public const string Interrupted = "interrupted";
 }
 
 public static class ItemResults
@@ -115,6 +120,45 @@ public static class LastRunFile
         {
             return null;
         }
+    }
+
+    /// <summary>
+    /// A record left at <see cref="RunStatuses.Running"/> by a run that is no longer going,
+    /// relabelled <see cref="RunStatuses.Interrupted"/>; null when the record finished.
+    /// Only call this while holding the single-instance lock, so no live run is mistaken
+    /// for a dead one. Its session.json under <paramref name="logsDirectory"/> is relabelled too.
+    /// </summary>
+    public static LastRunRecord? MarkInterrupted(LastRunRecord? record, string? logsDirectory = null)
+    {
+        if (record is null || !string.Equals(record.Status, RunStatuses.Running, StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        record.Status = RunStatuses.Interrupted;
+        if (logsDirectory is not null && SessionDirectory(logsDirectory, record.SessionId) is { } dir)
+        {
+            try
+            {
+                var sessionFile = Path.Combine(dir, "session.json");
+                if (File.Exists(sessionFile) &&
+                    System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(sessionFile)) is System.Text.Json.Nodes.JsonObject session &&
+                    (string?)session["status"] == RunStatuses.Running)
+                {
+                    session["status"] = RunStatuses.Interrupted;
+                    File.WriteAllText(sessionFile, session.ToJsonString(WriteOptions));
+                }
+            }
+            catch
+            {
+            }
+        }
+        return record;
+    }
+
+    /// <summary>Session <c>2026-10-05-030002</c> lives in <c>logs/2026-10-05/030002</c>.</summary>
+    public static string? SessionDirectory(string logsDirectory, string sessionId)
+    {
+        if (sessionId.Length < 12 || sessionId[10] != '-') return null;
+        return Path.Combine(logsDirectory, sessionId[..10], sessionId[11..]);
     }
 
     /// <summary>First line of an error, trimmed to <see cref="MaxErrorLength"/>.</summary>

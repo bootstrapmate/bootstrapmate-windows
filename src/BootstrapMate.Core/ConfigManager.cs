@@ -163,6 +163,7 @@ public sealed class ConfigManager
         WriteBool("BlurScreen", settings.BlurScreen);
         WriteString("CustomInstallPath", settings.CustomInstallPath);
         WriteInt("NetworkTimeout", settings.NetworkTimeout);
+        WriteInt("BaselineMinIntervalHours", settings.BaselineMinIntervalHours);
         WriteString("ReportingUrl", settings.ReportingUrl);
         WriteString("ReportingHeader", settings.ReportingHeader);
         WriteBool("VerifyPackageSignatures", settings.VerifyPackageSignatures);
@@ -241,6 +242,9 @@ public sealed class ConfigManager
         if (management.GetManagedInt("NetworkTimeout") is { } timeout)
             Config.NetworkTimeout = timeout;
 
+        if (management.GetManagedInt("BaselineMinIntervalHours") is { } baselineHours)
+            Config.BaselineMinIntervalHours = baselineHours;
+
         if (management.GetManagedString("ReportingUrl") is { Length: > 0 } reportingUrl)
             Config.ReportingUrl = reportingUrl;
 
@@ -302,6 +306,7 @@ public sealed class ConfigManager
             Config.BlurScreen = ReadBool(settingsKey, "BlurScreen") ?? Config.BlurScreen;
             Config.CustomInstallPath = ReadString(settingsKey, "CustomInstallPath") ?? Config.CustomInstallPath;
             Config.NetworkTimeout = ReadInt(settingsKey, "NetworkTimeout") ?? Config.NetworkTimeout;
+            Config.BaselineMinIntervalHours = ReadInt(settingsKey, "BaselineMinIntervalHours") ?? Config.BaselineMinIntervalHours;
             Config.ReportingUrl = ReadString(settingsKey, "ReportingUrl") ?? Config.ReportingUrl;
             Config.ReportingHeader = ReadString(settingsKey, "ReportingHeader") ?? Config.ReportingHeader;
             Config.VerifyPackageSignatures = ReadBool(settingsKey, "VerifyPackageSignatures") ?? Config.VerifyPackageSignatures;

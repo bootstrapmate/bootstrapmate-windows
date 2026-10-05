@@ -35,6 +35,7 @@ public sealed class ManagementDetector
         ["BlurScreen"]          = ["BlurScreen"],
         ["CustomInstallPath"]   = ["CustomInstallPath", "InstallPath", "iapath"],
         ["NetworkTimeout"]      = ["NetworkTimeout"],
+        ["BaselineMinIntervalHours"] = ["BaselineMinIntervalHours"],
         ["ReportingUrl"]        = ["ReportingUrl", "ReportURL", "reportingUrl"],
         ["ReportingHeader"]     = ["ReportingHeader", "ReportingAuthorizationHeader"],
         ["VerifyPackageSignatures"] = ["VerifyPackageSignatures", "VerifySignatures"],

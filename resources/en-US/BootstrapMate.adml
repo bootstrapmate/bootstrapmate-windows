@@ -86,6 +86,12 @@ Default: Disabled</string>
 
 Default: C:\Program Files\BootstrapMate</string>
 
+      <string id="BaselineMinIntervalHours">Minimum Hours Between Baseline Runs</string>
+      <string id="BaselineMinIntervalHours_Help">A baseline run that starts less than this many hours after the last completed baseline exits as a skip before downloading anything. A failed, partially failed or interrupted baseline gets one retry after 24 hours, never sooner; if that retry fails too, the full interval applies. Provisioning runs are not limited. While C:\ProgramData\ManagedBootstrap\.bootstrap_force is present the limit does not apply; the preflight consumes the file.
+
+Range: 0-8760 hours
+Default: 144 hours (6 days)</string>
+
       <string id="NetworkTimeout">Network Timeout (seconds)</string>
       <string id="NetworkTimeout_Help">Timeout in seconds for the manifest request, and how long a package download may go without receiving data before the attempt fails and is retried. A large package keeps downloading for as long as data keeps arriving.
 
@@ -164,6 +170,9 @@ Default: Disabled</string>
 
       <presentation id="NetworkTimeout">
         <decimalTextBox refId="NetworkTimeout_Value" defaultValue="120">Timeout (seconds):</decimalTextBox>
+      </presentation>
+      <presentation id="BaselineMinIntervalHours">
+        <decimalTextBox refId="BaselineMinIntervalHours_Value" defaultValue="144">Hours between baseline runs:</decimalTextBox>
       </presentation>
 
       <presentation id="ReportingUrl">

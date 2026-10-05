@@ -17,6 +17,7 @@ namespace BootstrapMate
         {
             lock (_lock)
             {
+                RecoverInterruptedRun();
                 _record = new LastRunRecord
                 {
                     SessionId = Logger.GetSessionId() ?? "",
@@ -26,6 +27,26 @@ namespace BootstrapMate
                     StartTime = Iso(Logger.SessionStartTime)
                 };
                 LastRunFile.Write(_record);
+            }
+        }
+
+        /// <summary>
+        /// A last-run.json still at "running" belongs to a run that died: this run holds the
+        /// single-instance lock, so none other is going. Its session is relabelled
+        /// "interrupted", and an interrupted baseline counts as a failed one, so the throttle
+        /// gives it one retry a day later instead of letting whatever killed it loop.
+        /// </summary>
+        private static void RecoverInterruptedRun()
+        {
+            var orphan = LastRunFile.MarkInterrupted(LastRunFile.Read(), Logger.LogDirectory);
+            if (orphan is null) return;
+
+            Logger.Warning($"Previous run {orphan.SessionId} ({orphan.RunType}, started {orphan.StartTime}) " +
+                           "never finished; recorded as interrupted");
+            if (string.Equals(orphan.RunType, RunTypes.Baseline, StringComparison.OrdinalIgnoreCase))
+            {
+                var when = DateTimeOffset.TryParse(orphan.StartTime, out var started) ? started : DateTimeOffset.Now;
+                BaselineThrottle.Write(BaselineThrottle.After(BaselineThrottle.Read(), RunStatuses.Interrupted, when));
             }
         }
 
@@ -72,6 +93,13 @@ namespace BootstrapMate
                 _record.Errors = outcome.Errors;
                 _record.Warnings = outcome.Warnings;
                 LastRunFile.Write(_record);
+
+                // The baseline clock: a baseline sets it, a provisioning run clears it (a
+                // machine provisioned again starts over), a skip leaves it alone.
+                if (_record.RunType == RunTypes.Baseline)
+                    BaselineThrottle.Write(BaselineThrottle.After(BaselineThrottle.Read(), outcome.Status, new DateTimeOffset(outcome.End)));
+                else if (_record.RunType == RunTypes.Provisioning && outcome.Status == RunStatuses.Completed)
+                    BaselineThrottle.Clear();
             }
         }
 
