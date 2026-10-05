@@ -97,6 +97,25 @@
       <RegistryValue Root="HKLM" Key="SOFTWARE\BootstrapMate" Name="DataDirectoryAcl" Value="1" Type="integer" KeyPath="yes" />
     </Component>
 
+    <!-- Credential headers live in HKLM\SOFTWARE\BootstrapMate\Secrets, readable only by
+         SYSTEM and Administrators; the CLI moves any header it finds in the user-readable
+         policy or settings keys there. -->
+    <Component Id="SecretsAndLegacyRegistry" Directory="INSTALLDIR" Guid="5C8D2E7F-3B1A-4F69-A0D4-8E2B7C6F1A93">
+      <RegistryKey Root="HKLM" Key="SOFTWARE\BootstrapMate\Secrets" ForceCreateOnInstall="yes">
+        <PermissionEx Sddl="D:PAI(A;CI;KA;;;SY)(A;CI;KA;;;BA)" />
+      </RegistryKey>
+      <RegistryValue Root="HKLM" Key="SOFTWARE\BootstrapMate" Name="SecretsStore" Value="1" Type="integer" KeyPath="yes" />
+    </Component>
+
+    <!-- Settings are read from the 64-bit view only; this removes the stale 32-bit copy
+         (WOW6432Node\BootstrapMate\Settings). The component is 32-bit so the key resolves in
+         that view. Never list SOFTWARE\Policies here: it is shared between the views, so
+         its 32-bit path is the live policy key. -->
+    <Component Id="LegacyWow64Settings" Directory="TARGETDIR" Bitness="always32" Guid="9E4A6C2B-71D3-4B8F-A5E0-2D6C8F1B3A47">
+      <RemoveRegistryKey Root="HKLM" Key="SOFTWARE\BootstrapMate\Settings" Action="removeOnInstall" />
+      <RegistryValue Root="HKLM" Key="SOFTWARE\BootstrapMate" Name="LegacySettingsCleanup" Value="1" Type="integer" KeyPath="yes" />
+    </Component>
+
     <!-- Machine-level fallback settings: ConfigManager reads HKLM\SOFTWARE\BootstrapMate\Settings
          when no CSP policy is present. CSP at HKLM\SOFTWARE\Policies\BootstrapMate still overrides. -->
     <Component Id="MachineSettings" Directory="INSTALLDIR" Guid="C1F2B3A4-D5E6-4789-9012-A1B2C3D4E5F6">
@@ -173,6 +192,8 @@
       <ComponentRef Id="RegistryEntries" />
       <ComponentRef Id="MachineSettings" />
       <ComponentRef Id="DataDirectoryAcl" />
+      <ComponentRef Id="SecretsAndLegacyRegistry" />
+      <ComponentRef Id="LegacyWow64Settings" />
       <ComponentRef Id="SetPathComponent" />
       <ComponentRef Id="StartMenuShortcut" />
       <ComponentRef Id="LegacyStartMenuCleanup" />

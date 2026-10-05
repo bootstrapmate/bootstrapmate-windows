@@ -103,10 +103,14 @@ public sealed class ManagementDetector
     private static string[] GetAliases(string canonicalKey)
         => KeyAliases.TryGetValue(canonicalKey, out var aliases) ? aliases : [canonicalKey];
 
+    /// <summary>Every policy value name that sets <paramref name="canonicalKey"/>.</summary>
+    public static string[] AliasesFor(string canonicalKey) => GetAliases(canonicalKey);
+
     private static object? FindRegistryValue(string[] keyNames)
     {
-        // Check both 64-bit and 32-bit registry views
-        foreach (var view in new[] { RegistryView.Registry64, RegistryView.Registry32 })
+        // 64-bit view only: Intune and Group Policy write there, and a stale 32-bit copy
+        // (WOW6432Node) must never outrank it.
+        foreach (var view in new[] { RegistryView.Registry64 })
         {
             try
             {

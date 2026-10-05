@@ -72,7 +72,7 @@ namespace BootstrapMate
                 WriteToFile(LogLevel.Info, $"Process Architecture: {System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture}");
                 WriteToFile(LogLevel.Info, $"OS Architecture: {System.Runtime.InteropServices.RuntimeInformation.OSArchitecture}");
                 WriteToFile(LogLevel.Info, $"Working Directory: {Environment.CurrentDirectory}");
-                WriteToFile(LogLevel.Info, $"Command Line: {Environment.CommandLine}");
+                WriteToFile(LogLevel.Info, $"Command Line: {BootstrapMate.Core.CommandLineRedaction.Redact(Environment.CommandLine)}");
                 WriteToFile(LogLevel.Info, $"Is Interactive: {Environment.UserInteractive}");
                 WriteToFile(LogLevel.Info, $"Current User: {System.Security.Principal.WindowsIdentity.GetCurrent().Name}");
                 WriteToFile(LogLevel.Info, $"Verbose Console: {verboseConsole}");

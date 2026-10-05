@@ -259,11 +259,8 @@ public partial class PrefsViewModel : ObservableObject
             args.Add(ManifestUrl);
         }
 
-        if (!string.IsNullOrWhiteSpace(AuthorizationHeader))
-        {
-            args.Add("--headers");
-            args.Add(AuthorizationHeader);
-        }
+        // No --headers: the header is saved to the protected store, where the elevated run
+        // reads it, and never travels on a command line.
 
         if (DryRun) args.Add("--dry-run");
         if (SilentMode) args.Add("--silent");

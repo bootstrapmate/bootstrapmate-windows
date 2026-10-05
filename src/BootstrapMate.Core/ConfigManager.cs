@@ -146,6 +146,12 @@ public sealed class ConfigManager
         void WriteString(string key, string? value)
         {
             if (Skip(key)) return;
+            if (OperatingSystem.IsWindows() && SecretStore.IsSecret(key))
+            {
+                // Credentials never go to the user-readable settings key.
+                SecretStore.Write(key, value);
+                return;
+            }
             WriteRegistryValue(key, value ?? string.Empty, RegistryValueKind.String);
         }
 
@@ -201,6 +207,21 @@ public sealed class ConfigManager
 
         LoadFromMachineRegistry();
         LoadFromManagement(management);
+        LoadSecrets();
+    }
+
+    /// <summary>
+    /// Credential headers come from the protected store, which only an elevated process can
+    /// read; a readable copy left in policy or settings is used only until an elevated run
+    /// moves it there.
+    /// </summary>
+    private void LoadSecrets()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            Config.AuthorizationHeader = SecretStore.Read("AuthorizationHeader") ?? Config.AuthorizationHeader;
+            Config.ReportingHeader = SecretStore.Read("ReportingHeader") ?? Config.ReportingHeader;
+        }
     }
 
     private void LoadFromManagement(ManagementDetector management)
@@ -273,10 +294,9 @@ public sealed class ConfigManager
 
     private void LoadFromMachineRegistry()
     {
-        // HKLM\SOFTWARE\BootstrapMate\Settings — read from both registry views so
-        // a 32-bit MSI write is visible to the 64-bit binary and vice-versa.
+        // HKLM\SOFTWARE\BootstrapMate\Settings, 64-bit view only: the MSI and the GUI write
+        // there, and a stale 32-bit copy (WOW6432Node) used to outrank them.
         LoadFromHive(RegistryHive.LocalMachine, ConfigSource.MachineSettings, RegistryView.Registry64);
-        LoadFromHive(RegistryHive.LocalMachine, ConfigSource.MachineSettings, RegistryView.Registry32);
     }
 
     private void LoadFromHive(RegistryHive hive, ConfigSource source, RegistryView view = RegistryView.Default)
