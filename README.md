@@ -34,6 +34,22 @@ Before building, set up your environment variables:
 
 3. **Install your code signing certificate** in the Current User certificate store
 
+## Where settings are read
+
+Settings come from policy (`HKLM\SOFTWARE\Policies\BootstrapMate`, written by Intune or Group
+Policy) and then machine settings (`HKLM\SOFTWARE\BootstrapMate\Settings`). Both are read from
+the 64-bit registry view only. A copy of the settings key in `WOW6432Node` is stale. The MSI
+removes it, and the CLI removes it once and logs which values it removed. The policy key is
+shared between the two views and is never removed.
+
+`AuthorizationHeader` and `ReportingHeader` carry credentials, so they live in
+`HKLM\SOFTWARE\BootstrapMate\Secrets`. Only SYSTEM and Administrators can read that key.
+Deliver a header through policy as usual. The next elevated run moves it into that key and
+blanks the copy in policy, which every user can read. The policy value is emptied, not deleted,
+so the setting still shows as managed. The GUI shows a saved header masked and saves a new one
+only after Unlock. BootstrapMate never writes a header to its logs, `session.json` or
+`last-run.json`, and it redacts `--headers` from every logged command line.
+
 ## Reporting
 
 When a run completes, BootstrapMate can POST a vendor-neutral JSON run summary to an optional endpoint, turning "did this PC provision cleanly?" into a fleet-dashboard query. The payload is plain JSON and not tied to any specific backend — any service accepting a JSON POST (a custom collector, ReportMate, MunkiReport, etc.) can consume it. Both the Windows and macOS clients emit the same schema.
