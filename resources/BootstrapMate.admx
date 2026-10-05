@@ -206,6 +206,19 @@
       </elements>
     </policy>
 
+    <policy name="BaselineMinIntervalHours"
+            class="Machine"
+            displayName="$(string.BaselineMinIntervalHours)"
+            explainText="$(string.BaselineMinIntervalHours_Help)"
+            key="SOFTWARE\Policies\BootstrapMate"
+            presentation="$(presentation.BaselineMinIntervalHours)">
+      <parentCategory ref="Advanced" />
+      <supportedOn ref="windows:SUPPORTED_Windows_10_0" />
+      <elements>
+        <decimal id="BaselineMinIntervalHours_Value" valueName="BaselineMinIntervalHours" minValue="0" maxValue="8760" />
+      </elements>
+    </policy>
+
     <!-- ═══ Reporting ═══ -->
 
     <policy name="ReportingUrl"

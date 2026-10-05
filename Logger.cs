@@ -41,6 +41,7 @@ namespace BootstrapMate
                 _verboseConsole = verboseConsole;
                 _silentMode = silentMode;
                 _sessionStartTime = DateTime.Now;
+                LogDirectory = logDirectory;
                 
                 // Ensure log directory exists
                 if (!Directory.Exists(logDirectory))
@@ -448,6 +449,9 @@ namespace BootstrapMate
 
         /// <summary>Relabels the session with the mode the preflight chose.</summary>
         public static void SetRunType(string runType) => _session?.SetRunType(runType);
+
+        /// <summary>The logs root this run's session directory sits under.</summary>
+        public static string? LogDirectory { get; private set; }
 
         /// <summary>When this run's session started.</summary>
         public static DateTime SessionStartTime => _sessionStartTime;

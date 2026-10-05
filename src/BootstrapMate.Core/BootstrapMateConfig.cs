@@ -39,6 +39,12 @@ public sealed class BootstrapMateConfig
     /// </summary>
     public int NetworkTimeout { get; set; } = BootstrapMateConstants.DefaultNetworkTimeout;
 
+    /// <summary>
+    /// Minimum hours between completed baseline runs; a failed baseline retries after 24.
+    /// See <see cref="BaselineThrottle"/>.
+    /// </summary>
+    public int BaselineMinIntervalHours { get; set; } = BaselineThrottle.DefaultMinIntervalHours;
+
     /// <summary>Creates a deep copy of this configuration.</summary>
     public BootstrapMateConfig Clone() => (BootstrapMateConfig)MemberwiseClone();
 }

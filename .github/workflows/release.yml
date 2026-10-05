@@ -51,13 +51,7 @@ jobs:
         run: |
           $tag = "${{ github.ref_name }}"
           $full = $tag -replace '^v',''
-          if ($full -match '^(\d+)\.(\d+)\.(\d+)\.(\d+)$') {
-            $msi = "$([int]$Matches[1] - 2000).$([int]$Matches[2]).$([int]$Matches[3]).$($Matches[4])"
-          } else {
-            $msi = $full
-          }
           "full=$full" | Out-File -Append $env:GITHUB_OUTPUT
-          "msi=$msi"   | Out-File -Append $env:GITHUB_OUTPUT
 
       - name: Build CLI (managedbootstrapinstall.exe)
         run: >
@@ -152,7 +146,7 @@ jobs:
             "--configuration", "Release",
             "--verbosity", "detailed",
             "-p:Platform=${{ matrix.arch }}",
-            "-p:ProductVersion=${{ steps.version.outputs.msi }}",
+            "-p:FullVersion=${{ steps.version.outputs.full }}",
             "-p:BinDir=$binDir",
             "-p:AppDir=$appDir"
           )

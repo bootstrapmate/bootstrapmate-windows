@@ -11,14 +11,23 @@
   </PropertyGroup>
 
   <PropertyGroup>
+    <!-- FullVersion is the build stamp everything else carries (YYYY.MM.DD.HHMM): file
+         versions, the CLI's version, HKLM\SOFTWARE\BootstrapMate\Version, logs and
+         release tags. Windows Installer fields are numeric (255.255.65535) and only the
+         first three are compared for upgrades, so the MSI ProductVersion is derived as
+         YY.M.DDHH.MM: upgrades compare to the hour and the minutes ride in the fourth
+         field. Two builds in the same hour compare equal; publish at most one per hour.
+         Same scheme as cimipkg (ReportMate 2026.09.15.21xx -> 26.9.1521). -->
+    <ProductVersion Condition="'$(ProductVersion)' == '' and '$(FullVersion)' != ''">$([System.Text.RegularExpressions.Regex]::Replace('$(FullVersion)', '^20(\d\d)\.0?(\d{1,2})\.0?(\d{1,2})\.(\d\d)0?(\d{1,2})$', '$1.$2.$3$4.$5'))</ProductVersion>
     <ProductVersion Condition="'$(ProductVersion)' == ''">0.0.0</ProductVersion>
+    <FullVersion Condition="'$(FullVersion)' == ''">$(ProductVersion)</FullVersion>
     <BinDir Condition="'$(BinDir)' == ''">$(MSBuildProjectDirectory)\..\publish\executables\$(Platform)</BinDir>
     <AppDir Condition="'$(AppDir)' == ''">$(MSBuildProjectDirectory)\..\publish\app\$(Platform)</AppDir>
     <SbinDir Condition="'$(SbinDir)' == ''">$(MSBuildProjectDirectory)\sbin-staging</SbinDir>
   </PropertyGroup>
 
   <PropertyGroup>
-    <DefineConstants>BIN_DIR=$(BinDir);APP_DIR=$(AppDir);SBIN_DIR=$(SbinDir);ProductVersion=$(ProductVersion)</DefineConstants>
+    <DefineConstants>BIN_DIR=$(BinDir);APP_DIR=$(AppDir);SBIN_DIR=$(SbinDir);ProductVersion=$(ProductVersion);FullVersion=$(FullVersion)</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>

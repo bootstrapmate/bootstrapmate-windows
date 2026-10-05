@@ -7,6 +7,9 @@
   <?ifndef ProductVersion?>
     <?define ProductVersion = "0.0.0"?>
   <?endif?>
+  <?ifndef FullVersion?>
+    <?define FullVersion = $(var.ProductVersion)?>
+  <?endif?>
   <!-- Package Definition -->
   <Package Name="Managed Bootstrap Install"
            Version="$(var.ProductVersion)"
@@ -70,11 +73,11 @@
     <!-- Registry entries for installation tracking AND detection -->
     <Component Id="RegistryEntries" Directory="INSTALLDIR" Guid="E5F6A7B8-C9D0-1234-EF56-789012345ABC">
       <RegistryValue Root="HKLM" Key="SOFTWARE\BootstrapMate" Name="InstallPath" Value="[INSTALLDIR]" Type="string" />
-      <RegistryValue Root="HKLM" Key="SOFTWARE\BootstrapMate" Name="Version" Value="$(var.ProductVersion)" Type="string" />
+      <RegistryValue Root="HKLM" Key="SOFTWARE\BootstrapMate" Name="Version" Value="$(var.FullVersion)" Type="string" />
       <RegistryValue Root="HKLM" Key="SOFTWARE\BootstrapMate" Name="InstallDate" Value="[Date]" Type="string" />
       <RegistryValue Root="HKLM" Key="SOFTWARE\BootstrapMate" Name="Architecture" Value="[ProcessorArchitecture]" Type="string" />
       <!-- LastRunVersion for Intune detection - must match version in deploy.ps1 detection rule -->
-      <RegistryValue Root="HKLM" Key="SOFTWARE\BootstrapMate" Name="LastRunVersion" Value="$(var.ProductVersion)" Type="string" />
+      <RegistryValue Root="HKLM" Key="SOFTWARE\BootstrapMate" Name="LastRunVersion" Value="$(var.FullVersion)" Type="string" />
     </Component>
 
     <!-- Machine-level fallback settings: ConfigManager reads HKLM\SOFTWARE\BootstrapMate\Settings

@@ -846,6 +846,10 @@ namespace BootstrapMate
 
                 // Initialize status tracking
                 StatusManager.Initialize(manifestUrl, Version);
+
+                // Looked at before the preflight, which consumes it: the throttle only looks.
+                bool forced = File.Exists(BaselineThrottle.ForceFilePath);
+
                 RunReport.Start(Version);
                 Logger.Debug($"Initialized status tracking with RunId: {StatusManager.GetCurrentRunId()}");
 
@@ -928,6 +932,24 @@ namespace BootstrapMate
                 bool baseline = decision == PreflightDecision.Baseline;
                 if (baseline)
                 {
+                    // Applied only once the preflight has chosen baseline, so provisioning is
+                    // never limited. The manifest and preflight are small; a throttled run
+                    // downloads no item.
+                    var throttle = BaselineThrottle.Evaluate(BaselineThrottle.Read(), DateTimeOffset.Now,
+                        ConfigManager.Instance.Config.BaselineMinIntervalHours, forced);
+                    if (throttle.Skip)
+                    {
+                        Logger.WriteSkipped($"Baseline throttle: skipping this run: {throttle.Reason}");
+                        RunReport.SetRunType(RunTypes.Skip);
+                        StatusManager.SetPhaseStatus(InstallationPhase.SetupAssistant, InstallationStage.Skipped);
+                        StatusManager.SetPhaseStatus(InstallationPhase.Userland, InstallationStage.Skipped);
+                        Logger.WriteCompletion("Nothing downloaded: baseline throttled");
+                        StatusManager.WriteSuccessfulCompletionRegistry();
+                        await ReportManager.SendRunSummaryAsync(true, runStartUtc, Version, manifestUrl);
+                        RunReport.Finish();
+                        return ExitSuccess;
+                    }
+                    Logger.Info($"Baseline throttle: running ({throttle.Reason})");
                     Logger.Info("Baseline mode: refreshing setupassistant items without a dialog; userland is skipped.");
                 }
                 else
@@ -1568,6 +1590,44 @@ namespace BootstrapMate
         }
 
         /// <summary>
+        /// The same checks as <see cref="BaselineSkipReason"/>, from manifest fields only:
+        /// the item's <c>hash</c> is in the install ledger, or an MSI item's
+        /// <c>productCode</c>/<c>upgradeCode</c> is installed at its <c>version</c> or newer.
+        /// Null when the manifest does not say enough, and the file is downloaded and
+        /// checked after.
+        /// </summary>
+        static string? BaselineSkipReasonBeforeDownload(JsonElement packageInfo, string type)
+        {
+            string? Field(string name) =>
+                packageInfo.ValueKind == JsonValueKind.Object &&
+                packageInfo.TryGetProperty(name, out var p) && p.ValueKind == JsonValueKind.String
+                    ? p.GetString() : null;
+
+            var hash = Field("hash");
+            if (!string.IsNullOrWhiteSpace(hash))
+            {
+                var bare = hash.Trim();
+                if (bare.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase)) bare = bare[7..];
+                if (new InstallLedger().Contains(bare))
+                    return "this file was already installed by BootstrapMate";
+            }
+
+            var version = Field("version");
+            var productCode = Field("productCode");
+            var upgradeCode = Field("upgradeCode");
+            if (type.Equals("msi", StringComparison.OrdinalIgnoreCase) &&
+                !string.IsNullOrWhiteSpace(version) &&
+                (!string.IsNullOrWhiteSpace(productCode) || !string.IsNullOrWhiteSpace(upgradeCode)))
+            {
+                var product = new MsiProduct.Info(productCode ?? "", version!, upgradeCode, PackageLabel(packageInfo));
+                if (MsiProduct.IsInstalledAtOrAbove(product, out var installed))
+                    return $"version {installed} is installed (manifest version {version})";
+            }
+
+            return null;
+        }
+
+        /// <summary>
         /// Why a baseline run can leave this file alone, or null when it must install it:
         /// the same file is in the install ledger, or its MSI product is already
         /// installed at this version or newer.
@@ -1599,6 +1659,14 @@ namespace BootstrapMate
             
             try
             {
+                // Baseline: decide from the manifest alone when possible, so an item that is
+                // already in place costs no download.
+                if (baseline && BaselineSkipReasonBeforeDownload(packageInfo, type) is { } earlySkip)
+                {
+                    Logger.WriteSkipped($"{displayName} - {earlySkip} (not downloaded)");
+                    return false;
+                }
+
                 DialogManager.Instance.NotifyDownloadStarted(displayName);
                 await DownloadFile(displayName, url, localPath);
 

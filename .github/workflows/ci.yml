@@ -67,8 +67,8 @@ jobs:
         shell: pwsh
         run: |
           $now  = Get-Date
-          $msi  = "$($now.Year - 2000).$($now.Month).$($now.Day).$($now.ToString('HHmm'))"
-          "msi=$msi" | Out-File -Append $env:GITHUB_OUTPUT
+          $full = $now.ToString('yyyy.MM.dd.HHmm')
+          "full=$full" | Out-File -Append $env:GITHUB_OUTPUT
 
       - name: Build CLI (managedbootstrapinstall.exe)
         run: >
@@ -98,7 +98,7 @@ jobs:
             "--configuration", "Release",
             "--verbosity", "minimal",
             "-p:Platform=${{ matrix.arch }}",
-            "-p:ProductVersion=${{ steps.version.outputs.msi }}",
+            "-p:FullVersion=${{ steps.version.outputs.full }}",
             "-p:BinDir=$binDir",
             "-p:AppDir=$appDir"
           )

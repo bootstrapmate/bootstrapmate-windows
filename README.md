@@ -173,8 +173,11 @@ the preflight has decided, it is rewritten with `skip`, `baseline` or
 run. It is written atomically when the run starts, with status `running`, and
 again when the session closes. At the start, `end_time` and `duration_seconds` are
 `null` and `items` is empty. Its status values match `session.json`: `running`,
-`completed`, `partial_failure` (some items failed), and `failed` (the preflight
-failed or the manifest would not load). The time in the `--last-run` line is UTC
+`completed`, `partial_failure` (some items failed), `failed` (the preflight
+failed or the manifest would not load), and `interrupted`: a run that died without
+recording its end (a reboot, a killed process). The next run finds the record still
+at `running`, relabels that run's `session.json`, and logs a warning before it
+writes its own record. The time in the `--last-run` line is UTC
 to the minute.
 
 ```json
@@ -213,6 +216,46 @@ no elevation and creates no session.
 install run started without elevation and without an interactive console (a script,
 a remote shell, redirected input) exits `3` instead of waiting at the elevation
 prompt.
+
+## Baseline throttle
+
+Every baseline run downloads from the package host, so baselines are rate-limited.
+The check runs only after the preflight has chosen baseline, so provisioning is never
+limited. It reads `C:\ProgramData\ManagedBootstrap\baseline.json`, which holds the
+last baseline's `end_time`, `status` and `consecutive_failures`. `last-run.json`
+cannot hold the clock, because every run rewrites it.
+
+| Last baseline | Next baseline |
+|---|---|
+| Completed less than `BaselineMinIntervalHours` ago (default 144) | Skips |
+| Failed, partially failed or interrupted for the first time | One retry after 24 hours, never sooner |
+| Failed again after that retry | Waits the full interval |
+| None: a provisioning run clears the record | Runs |
+| Any, with `C:\ProgramData\ManagedBootstrap\.bootstrap_force` present | Runs; the preflight consumes the file |
+
+A throttled run fetches the manifest and runs the preflight, then downloads nothing.
+It logs why, ends as `skip`, records SetupAssistant and Userland as `Skipped` in
+`status.json`, and leaves `baseline.json` alone. `--force` does not bypass the
+throttle. `BaselineMinIntervalHours` comes from policy or the settings registry
+(0-8760; 0 disables the limit for completed runs).
+
+A baseline run also skips an item without downloading it when the manifest says
+enough: its `hash` is already in the install ledger, or an `msi` item's `productCode`
+or `upgradeCode` is installed at its `version` (the MSI ProductVersion) or newer.
+Without those fields, the file is downloaded and checked afterwards.
+
+## Versions
+
+Everything carries the build stamp `YYYY.MM.DD.HHMM`: file and assembly versions,
+`--version`, `HKLM\SOFTWARE\BootstrapMate\Version` (the Intune detection value),
+logs, `last-run.json` and release tags.
+
+The MSI ProductVersion is the only exception. Windows Installer fields are numeric
+(255.255.65535), and upgrades compare only the first three fields, so the MSI uses
+`YY.M.DDHH.MM`: `2026.10.04.1951` is `26.10.419.51`. Upgrades compare to the hour.
+Two builds made in the same hour compare equal and do not upgrade each other, so
+publish at most one build per hour. Pass `-p:FullVersion=YYYY.MM.DD.HHMM` to the
+installer project; it derives the ProductVersion.
 
 ## Downloads
 

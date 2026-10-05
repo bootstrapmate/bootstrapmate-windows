@@ -1507,14 +1507,10 @@ function Update-Version {
     $newVersion = "$year.$month.$day.$revision"
     Write-Log "Updating version to: $newVersion (YYYY.MM.DD.HHMM format for Intune compatibility)" "INFO"
     
-    # Create MSI-compatible version (major.minor.build < 65536)
-    # Convert YYYY.MM.DD.HHMM to YY.MM.DD.HHMM for MSI ProductVersion
-    $now = Get-Date
-    $msiMajor = $now.Year - 2000  # e.g., 25 for 2025
-    $msiMinor = [int]$now.ToString("MM")        # e.g., 9 for September  
-    $msiBuild = [int]$now.ToString("dd")        # e.g., 2 for 2nd day
-    $msiRevision = [int]$now.ToString("HHmm")   # e.g., 2141 for 21:41
-    $msiVersion = "$msiMajor.$msiMinor.$msiBuild.$msiRevision"
+    # MSI ProductVersion is YY.M.DDHH.MM (Windows Installer compares only the first
+    # three fields, so the hour has to be in them). The wixproj derives the same value
+    # from FullVersion; this copy is only for the log.
+    $msiVersion = "{0}.{1}.{2}.{3}" -f ($now.Year - 2000), $now.Month, ($now.Day * 100 + $now.Hour), $now.Minute
     
     Write-Log "MSI ProductVersion: $msiVersion (MSI-compliant format)" "INFO"
     
@@ -1536,7 +1532,7 @@ function Update-Version {
     # Return version information regardless of whether static version was found
     return @{
         FullVersion = $newVersion      # YYYY.MM.DD.HHMM for Intune detection
-        MsiVersion = $msiVersion       # YY.MM.DD.HHMM for MSI ProductVersion
+        MsiVersion = $msiVersion       # YY.M.DDHH.MM for MSI ProductVersion
     }
 }
 
@@ -1571,7 +1567,7 @@ function Build-MSI {
         "--configuration", "Release",
         "--verbosity", "normal",
         "-p:Platform=$Arch",
-        "-p:ProductVersion=$($versionInfo.MsiVersion)",
+        "-p:FullVersion=$($versionInfo.FullVersion)",
         "-p:BinDir=$binDirAbsolute"
     )
     if ($appDirAbsolute) {
