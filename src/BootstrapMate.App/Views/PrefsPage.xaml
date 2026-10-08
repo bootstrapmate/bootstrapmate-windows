@@ -258,18 +258,42 @@
                     <TextBlock Text="Title" Style="{StaticResource CaptionTextBlockStyle}" Margin="0,4,0,0" />
                     <TextBox Text="{x:Bind ViewModel.DialogTitle, Mode=TwoWay}" PlaceholderText="Setting Up Your Device"
                              IsEnabled="{x:Bind ViewModel.CanEditDialogTitle, Mode=OneWay}" />
+                    <StackPanel Orientation="Horizontal" Spacing="4"
+                                Visibility="{x:Bind ViewModel.IsDialogTitleLocked, Mode=OneWay, Converter={StaticResource BoolToVisibility}}">
+                        <FontIcon Glyph="&#xE72E;" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <TextBlock Text="Managed by Policy" Style="{StaticResource CaptionTextBlockStyle}"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    </StackPanel>
 
                     <TextBlock Text="Message" Style="{StaticResource CaptionTextBlockStyle}" Margin="0,4,0,0" />
                     <TextBox Text="{x:Bind ViewModel.DialogMessage, Mode=TwoWay}" PlaceholderText="Please wait while we install required software..."
                              IsEnabled="{x:Bind ViewModel.CanEditDialogMessage, Mode=OneWay}" />
+                    <StackPanel Orientation="Horizontal" Spacing="4"
+                                Visibility="{x:Bind ViewModel.IsDialogMessageLocked, Mode=OneWay, Converter={StaticResource BoolToVisibility}}">
+                        <FontIcon Glyph="&#xE72E;" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <TextBlock Text="Managed by Policy" Style="{StaticResource CaptionTextBlockStyle}"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    </StackPanel>
 
                     <TextBlock Text="Icon" Style="{StaticResource CaptionTextBlockStyle}" Margin="0,4,0,0" />
                     <TextBox Text="{x:Bind ViewModel.DialogIcon, Mode=TwoWay}" PlaceholderText="Path to icon file (.ico, .png)"
                              IsEnabled="{x:Bind ViewModel.CanEditDialogIcon, Mode=OneWay}" />
+                    <StackPanel Orientation="Horizontal" Spacing="4"
+                                Visibility="{x:Bind ViewModel.IsDialogIconLocked, Mode=OneWay, Converter={StaticResource BoolToVisibility}}">
+                        <FontIcon Glyph="&#xE72E;" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <TextBlock Text="Managed by Policy" Style="{StaticResource CaptionTextBlockStyle}"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    </StackPanel>
 
                     <ToggleSwitch Margin="0,4,0,0" OnContent="Blur screen behind dialog" OffContent="Blur screen behind dialog"
                                   IsOn="{x:Bind ViewModel.BlurScreen, Mode=TwoWay}"
                                   IsEnabled="{x:Bind ViewModel.CanEditBlurScreen, Mode=OneWay}" />
+                    <StackPanel Orientation="Horizontal" Spacing="4"
+                                Visibility="{x:Bind ViewModel.IsBlurScreenLocked, Mode=OneWay, Converter={StaticResource BoolToVisibility}}">
+                        <FontIcon Glyph="&#xE72E;" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <TextBlock Text="Managed by Policy" Style="{StaticResource CaptionTextBlockStyle}"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    </StackPanel>
                 </StackPanel>
                 </Border>
 

@@ -12,12 +12,13 @@
 -->
 <policyDefinitions xmlns:xsd="http://www.w3.org/2001/XMLSchema"
                    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-                   revision="1.0"
+                   revision="1.1"
                    schemaVersion="1.0"
                    xmlns="http://schemas.microsoft.com/GroupPolicy/2006/07/PolicyDefinitions">
 
   <policyNamespaces>
     <target prefix="BootstrapMate" namespace="BootstrapMate.Policies" />
+    <using prefix="windows" namespace="Microsoft.Policies.Windows" />
   </policyNamespaces>
 
   <resources minRequiredRevision="1.0" />
@@ -121,6 +122,18 @@
             explainText="$(string.EnableDialog_Help)"
             key="SOFTWARE\Policies\BootstrapMate"
             valueName="EnableDialog">
+      <parentCategory ref="Dialog" />
+      <supportedOn ref="windows:SUPPORTED_Windows_10_0" />
+      <enabledValue><decimal value="1" /></enabledValue>
+      <disabledValue><decimal value="0" /></disabledValue>
+    </policy>
+
+    <policy name="NoDialog"
+            class="Machine"
+            displayName="$(string.NoDialog)"
+            explainText="$(string.NoDialog_Help)"
+            key="SOFTWARE\Policies\BootstrapMate"
+            valueName="NoDialog">
       <parentCategory ref="Dialog" />
       <supportedOn ref="windows:SUPPORTED_Windows_10_0" />
       <enabledValue><decimal value="1" /></enabledValue>
