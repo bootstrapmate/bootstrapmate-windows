@@ -82,6 +82,13 @@ Default: Please wait while we install required software...</string>
 
 Leave empty to use the default icon.</string>
 
+      <string id="DialogAuthKeyPath">Dialog Authorisation Key File</string>
+      <string id="DialogAuthKeyPath_Help">Path to a file holding the plain csharpDialog authorisation key. When csharpDialog is managed with an authorisation key, BootstrapMate reads this file and passes the key to the dialog in the DIALOG_AUTH_KEY environment variable. The file should be readable only by SYSTEM and Administrators.
+
+If the key is missing or wrong the dialog does not open and the run continues without it.
+
+Default: C:\ProgramData\ManagedNotifications\authkey</string>
+
       <string id="BlurScreen">Blur Screen Behind Dialog</string>
       <string id="BlurScreen_Help">When enabled, the screen behind the progress dialog is blurred to prevent user interaction during setup.
 
@@ -166,6 +173,12 @@ Default: Disabled</string>
       <presentation id="DialogIcon">
         <textBox refId="DialogIcon_Value">
           <label>Icon Path:</label>
+        </textBox>
+      </presentation>
+
+      <presentation id="DialogAuthKeyPath">
+        <textBox refId="DialogAuthKeyPath_Value">
+          <label>Key File Path:</label>
         </textBox>
       </presentation>
 

@@ -22,6 +22,8 @@ public sealed class BootstrapMateConfig
     public string? DialogIcon { get; set; }
     public bool BlurScreen { get; set; }
     public bool NoDialog { get; set; }
+    /// <summary>File holding the plain csharpDialog authorisation key; null means the default path.</summary>
+    public string? DialogAuthKeyPath { get; set; }
 
     // Reporting: vendor-neutral run-summary POST
     public string? ReportingUrl { get; set; }

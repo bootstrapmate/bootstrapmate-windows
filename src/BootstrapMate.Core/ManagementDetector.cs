@@ -33,6 +33,7 @@ public sealed class ManagementDetector
         ["DialogMessage"]       = ["DialogMessage"],
         ["DialogIcon"]          = ["DialogIcon"],
         ["BlurScreen"]          = ["BlurScreen"],
+        ["DialogAuthKeyPath"]   = ["DialogAuthKeyPath"],
         ["CustomInstallPath"]   = ["CustomInstallPath", "InstallPath", "iapath"],
         ["NetworkTimeout"]      = ["NetworkTimeout"],
         ["BaselineMinIntervalHours"] = ["BaselineMinIntervalHours"],
