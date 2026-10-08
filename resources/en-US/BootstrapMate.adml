@@ -5,7 +5,7 @@
 -->
 <policyDefinitionResources xmlns:xsd="http://www.w3.org/2001/XMLSchema"
                            xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-                           revision="1.0"
+                           revision="1.1"
                            schemaVersion="1.0"
                            xmlns="http://schemas.microsoft.com/GroupPolicy/2006/07/PolicyDefinitions">
 
@@ -59,6 +59,13 @@ Default: Disabled</string>
       <string id="EnableDialog_Help">When enabled, a progress dialog (csharpdialog) is shown during installation if available.
 
 Default: Enabled</string>
+
+      <string id="NoDialog">Hide Progress Dialog</string>
+      <string id="NoDialog_Help">When enabled, no progress dialog is shown, as with the --no-dialog command-line switch. This overrides "Enable Progress Dialog": the dialog is shown only when that policy is not disabled and this one is not enabled.
+
+Either policy, when configured, locks the "Show progress dialog" switch in the BootstrapMate Prefs tab.
+
+Default: Disabled</string>
 
       <string id="DialogTitle">Dialog Title</string>
       <string id="DialogTitle_Help">Custom title text shown in the progress dialog window.

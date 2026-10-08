@@ -313,7 +313,8 @@ A value still set for either is logged as a warning and otherwise ignored.
 
 `DryRun` is honoured by refusing to run, exactly like `--dry-run`: BootstrapMate has
 no simulated install, so a policy-set `DryRun` exits `1` without installing anything.
-`EnableDialog` set to false turns the dialog off, as `NoDialog` does. `DialogIcon`
+`EnableDialog` set to false turns the dialog off, as `NoDialog` does; the ADMX has a
+policy for each, and either one locks the Prefs tab's "Show progress dialog" switch. `DialogIcon`
 sets the dialog's icon. `SilentMode` and `VerboseMode` from policy or settings turn
 those modes on, and a CLI switch cannot turn them off.
 

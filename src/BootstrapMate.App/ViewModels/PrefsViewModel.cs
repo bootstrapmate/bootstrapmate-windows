@@ -137,7 +137,9 @@ public partial class PrefsViewModel : ObservableObject
 
     // ── Editability (elevated and not managed by policy) ────────
 
-    private bool CanEdit(string key) => PrefsElevation.CanEdit(IsElevated, _managedKeys.Contains(key));
+    private bool CanEdit(string field) => PrefsElevation.CanEdit(IsElevated, IsLocked(field));
+
+    private bool IsLocked(string field) => PrefsPolicy.IsLocked(field, _managedKeys);
 
     public bool CanEditManifestUrl => CanEdit("ManifestUrl");
     public bool CanEditAuthHeader => CanEdit("AuthorizationHeader");
@@ -152,14 +154,18 @@ public partial class PrefsViewModel : ObservableObject
     public bool CanEditCustomInstallPath => CanEdit("CustomInstallPath");
     public bool CanEditNetworkTimeout => CanEdit("NetworkTimeout");
 
-    public bool IsManifestUrlLocked => _managedKeys.Contains("ManifestUrl");
-    public bool IsAuthHeaderLocked => _managedKeys.Contains("AuthorizationHeader");
-    public bool IsSilentModeLocked => _managedKeys.Contains("SilentMode");
-    public bool IsVerboseModeLocked => _managedKeys.Contains("VerboseMode");
-    public bool IsDryRunLocked => _managedKeys.Contains("DryRun");
-    public bool IsEnableDialogLocked => _managedKeys.Contains("EnableDialog");
-    public bool IsCustomInstallPathLocked => _managedKeys.Contains("CustomInstallPath");
-    public bool IsNetworkTimeoutLocked => _managedKeys.Contains("NetworkTimeout");
+    public bool IsManifestUrlLocked => IsLocked("ManifestUrl");
+    public bool IsAuthHeaderLocked => IsLocked("AuthorizationHeader");
+    public bool IsSilentModeLocked => IsLocked("SilentMode");
+    public bool IsVerboseModeLocked => IsLocked("VerboseMode");
+    public bool IsDryRunLocked => IsLocked("DryRun");
+    public bool IsEnableDialogLocked => IsLocked("EnableDialog");
+    public bool IsDialogTitleLocked => IsLocked("DialogTitle");
+    public bool IsDialogMessageLocked => IsLocked("DialogMessage");
+    public bool IsDialogIconLocked => IsLocked("DialogIcon");
+    public bool IsBlurScreenLocked => IsLocked("BlurScreen");
+    public bool IsCustomInstallPathLocked => IsLocked("CustomInstallPath");
+    public bool IsNetworkTimeoutLocked => IsLocked("NetworkTimeout");
 
     // ── Save Status Display (for x:Bind) ────────────────────────
 
@@ -204,7 +210,7 @@ public partial class PrefsViewModel : ObservableObject
         SilentMode = config.SilentMode;
         VerboseMode = config.VerboseMode;
         DryRun = config.DryRun;
-        EnableDialog = config.EnableDialog;
+        EnableDialog = PrefsPolicy.IsDialogShown(config);
         DialogTitle = config.DialogTitle;
         DialogMessage = config.DialogMessage;
         DialogIcon = config.DialogIcon ?? "";
