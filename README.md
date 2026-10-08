@@ -317,6 +317,17 @@ no simulated install, so a policy-set `DryRun` exits `1` without installing anyt
 sets the dialog's icon. `SilentMode` and `VerboseMode` from policy or settings turn
 those modes on, and a CLI switch cannot turn them off.
 
+## csharpDialog authorisation key
+
+When csharpDialog is managed with an authorisation key, it opens only for a caller that
+passes the matching plain key in the `DIALOG_AUTH_KEY` environment variable, and otherwise
+exits `30`. BootstrapMate passes its own `DIALOG_AUTH_KEY` through when it has one, and
+otherwise reads the key from the file named by `DialogAuthKeyPath` (policy or machine
+settings; default `C:\ProgramData\ManagedNotifications\authkey`), which should be readable
+only by SYSTEM and Administrators. The key is never put on the command line or logged. With
+no key, or a wrong one, the dialog does not open, a warning is logged, and the run carries
+on without it.
+
 ## Registry Status Contract
 
 BootstrapMate tracks completion status in both 64-bit and 32-bit registry views:

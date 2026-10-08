@@ -317,12 +317,43 @@ namespace BootstrapMate
                     CreateNoWindow  = false,
                 };
 
-                _dialogProcess = Process.Start(startInfo);
+                // A shell-executed child cannot be given its own environment, only inherit
+                // ours, so the key is set on this process for the launch and removed again.
+                // It never goes on the command line or into the log.
+                var authKey = BootstrapMate.Core.DialogAuthKey.Resolve(
+                    BootstrapMate.Core.ConfigManager.Instance.Config.DialogAuthKeyPath);
+                var callerKey = Environment.GetEnvironmentVariable(BootstrapMate.Core.DialogAuthKey.EnvironmentVariable);
+                try
+                {
+                    if (authKey != null)
+                        Environment.SetEnvironmentVariable(BootstrapMate.Core.DialogAuthKey.EnvironmentVariable, authKey);
+                    _dialogProcess = Process.Start(startInfo);
+                }
+                finally
+                {
+                    Environment.SetEnvironmentVariable(BootstrapMate.Core.DialogAuthKey.EnvironmentVariable, callerKey);
+                }
+
+                // A dialog that refuses the key exits at once with 30. Catch that here so the
+                // run carries on headless instead of writing to a dialog that is not there.
+                if (_dialogProcess != null && _dialogProcess.WaitForExit(3000) &&
+                    _dialogProcess.ExitCode == BootstrapMate.Core.DialogAuthKey.KeyRequiredExitCode)
+                {
+                    Logger.Warning(authKey == null
+                        ? "csharpdialog requires an authorisation key and none was found; continuing without the dialog"
+                        : "csharpdialog rejected the authorisation key; continuing without the dialog");
+                    _dialogProcess.Dispose();
+                    _dialogProcess = null;
+                    _isAvailable = false;
+                    return;
+                }
 
                 if (_dialogProcess != null)
                 {
                     _isRunning = true;
-                    Logger.Info("csharpdialog launched successfully");
+                    Logger.Info(authKey != null
+                        ? "csharpdialog launched successfully (authorisation key supplied)"
+                        : "csharpdialog launched successfully");
                 }
                 else
                 {

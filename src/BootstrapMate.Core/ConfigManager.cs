@@ -179,6 +179,7 @@ public sealed class ConfigManager
         WriteString("DialogMessage", settings.DialogMessage);
         WriteString("DialogIcon", settings.DialogIcon);
         WriteBool("BlurScreen", settings.BlurScreen);
+        WriteString("DialogAuthKeyPath", settings.DialogAuthKeyPath);
         WriteString("CustomInstallPath", settings.CustomInstallPath);
         WriteInt("NetworkTimeout", settings.NetworkTimeout);
         WriteInt("BaselineMinIntervalHours", settings.BaselineMinIntervalHours);
@@ -265,6 +266,9 @@ public sealed class ConfigManager
         if (management.GetManagedString("DialogIcon") is { Length: > 0 } icon)
             Config.DialogIcon = icon;
 
+        if (management.GetManagedString("DialogAuthKeyPath") is { Length: > 0 } keyPath)
+            Config.DialogAuthKeyPath = keyPath;
+
         if (management.GetManagedBool("BlurScreen") is { } blur)
             Config.BlurScreen = blur;
 
@@ -330,6 +334,7 @@ public sealed class ConfigManager
             Config.DialogMessage = ReadString(settingsKey, "DialogMessage") ?? Config.DialogMessage;
             Config.DialogIcon = ReadString(settingsKey, "DialogIcon") ?? Config.DialogIcon;
             Config.BlurScreen = ReadBool(settingsKey, "BlurScreen") ?? Config.BlurScreen;
+            Config.DialogAuthKeyPath = ReadString(settingsKey, "DialogAuthKeyPath") ?? Config.DialogAuthKeyPath;
             Config.CustomInstallPath = ReadString(settingsKey, "CustomInstallPath") ?? Config.CustomInstallPath;
             Config.NetworkTimeout = ReadInt(settingsKey, "NetworkTimeout") ?? Config.NetworkTimeout;
             Config.BaselineMinIntervalHours = ReadInt(settingsKey, "BaselineMinIntervalHours") ?? Config.BaselineMinIntervalHours;

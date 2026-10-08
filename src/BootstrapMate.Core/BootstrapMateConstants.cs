@@ -47,6 +47,12 @@ public static class BootstrapMateConstants
     /// <summary>Default dialog message.</summary>
     public const string DefaultDialogMessage = "Please wait while we install required software...";
 
+    /// <summary>
+    /// Where the csharpDialog authorisation key is read from when no DialogAuthKeyPath is set.
+    /// The file should be readable only by SYSTEM and Administrators.
+    /// </summary>
+    public const string DefaultDialogAuthKeyPath = @"C:\ProgramData\ManagedNotifications\authkey";
+
     /// <summary>Named pipe prefix for GUI ↔ CLI communication.</summary>
     public const string PipeNamePrefix = "BootstrapMate_";
 

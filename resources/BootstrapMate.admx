@@ -166,6 +166,19 @@
       </elements>
     </policy>
 
+    <policy name="DialogAuthKeyPath"
+            class="Machine"
+            displayName="$(string.DialogAuthKeyPath)"
+            explainText="$(string.DialogAuthKeyPath_Help)"
+            key="SOFTWARE\Policies\BootstrapMate"
+            presentation="$(presentation.DialogAuthKeyPath)">
+      <parentCategory ref="Dialog" />
+      <supportedOn ref="windows:SUPPORTED_Windows_10_0" />
+      <elements>
+        <text id="DialogAuthKeyPath_Value" valueName="DialogAuthKeyPath" />
+      </elements>
+    </policy>
+
     <policy name="BlurScreen"
             class="Machine"
             displayName="$(string.BlurScreen)"
