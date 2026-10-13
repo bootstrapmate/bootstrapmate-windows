@@ -268,7 +268,7 @@
                 </StackPanel>
                 </Border>
 
-                <!-- ── Services Card (read-only: what the installer registers) ── -->
+                <!-- ── Services Card (read-only accordion of what the installer registers; omit the card when it registers nothing) ── -->
                 <Border Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2" Style="{StaticResource CardStyle}">
                 <StackPanel Spacing="8">
                     <Grid Margin="0,0,0,4">
@@ -291,48 +291,64 @@
                         </StackPanel>
                     </Grid>
 
+                    <!-- One collapsed Expander per service or task. The Expander's header is a
+                         full-width toggle button (click, Space, Enter) and its header content
+                         stretches by default, so the whole row toggles. -->
                     <ItemsRepeater ItemsSource="{x:Bind ViewModel.Services, Mode=OneWay}">
-                        <ItemsRepeater.Layout>
-                            <StackLayout Spacing="12" />
-                        </ItemsRepeater.Layout>
                         <ItemsRepeater.ItemTemplate>
                             <DataTemplate x:DataType="core:FootprintStatus">
-                                <Grid ColumnSpacing="16">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="2*" />
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="1.5*" />
-                                        <ColumnDefinition Width="1.5*" />
-                                    </Grid.ColumnDefinitions>
-                                    <StackPanel Grid.Column="0">
-                                        <TextBlock Text="{x:Bind FriendlyName}" TextWrapping="WrapWholeWords"
-                                                   ToolTipService.ToolTip="{x:Bind Description}" />
-                                        <TextBlock Text="{x:Bind Name}" Style="{StaticResource CaptionTextBlockStyle}"
-                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"
-                                                   IsTextSelectionEnabled="True" />
-                                    </StackPanel>
-                                    <StackPanel Grid.Column="1">
-                                        <TextBlock Text="Kind" Style="{StaticResource CaptionTextBlockStyle}"
-                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                        <TextBlock Text="{x:Bind KindText}" TextWrapping="WrapWholeWords" />
-                                    </StackPanel>
-                                    <StackPanel Grid.Column="2">
-                                        <TextBlock Text="State" Style="{StaticResource CaptionTextBlockStyle}"
-                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                        <TextBlock Text="{x:Bind State}" TextWrapping="WrapWholeWords" />
-                                    </StackPanel>
-                                    <StackPanel Grid.Column="3">
-                                        <TextBlock Text="Last result" Style="{StaticResource CaptionTextBlockStyle}"
-                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                        <TextBlock Text="{x:Bind LastResult}" TextWrapping="WrapWholeWords" />
-                                    </StackPanel>
-                                    <StackPanel Grid.Column="4">
-                                        <TextBlock Text="Schedule" Style="{StaticResource CaptionTextBlockStyle}"
-                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                        <TextBlock Text="{x:Bind Trigger}" TextWrapping="WrapWholeWords" />
-                                    </StackPanel>
-                                </Grid>
+                                <Expander IsExpanded="False" Margin="0,4"
+                                          HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
+                                          AutomationProperties.Name="{x:Bind FriendlyName}">
+                                    <Expander.Header>
+                                        <Grid ColumnSpacing="12" Padding="0,8" HorizontalAlignment="Stretch">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                                <TextBlock Text="{x:Bind FriendlyName}" Style="{StaticResource BodyStrongTextBlockStyle}"
+                                                           TextWrapping="WrapWholeWords" />
+                                                <TextBlock Text="{x:Bind Summary}" Style="{StaticResource CaptionTextBlockStyle}"
+                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                           TextWrapping="WrapWholeWords" />
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                                <Grid VerticalAlignment="Center">
+                                                    <Ellipse Width="10" Height="10" Fill="{ThemeResource SystemFillColorSuccessBrush}"
+                                                             Visibility="{x:Bind IsRunning}" />
+                                                    <Ellipse Width="10" Height="10" Fill="{ThemeResource SystemFillColorAttentionBrush}"
+                                                             Visibility="{x:Bind IsReady}" />
+                                                    <Ellipse Width="10" Height="10" Fill="{ThemeResource SystemFillColorNeutralBrush}"
+                                                             Visibility="{x:Bind IsNeutral}" />
+                                                </Grid>
+                                                <TextBlock Text="{x:Bind State}" Style="{StaticResource CaptionTextBlockStyle}"
+                                                           VerticalAlignment="Center" />
+                                            </StackPanel>
+                                        </Grid>
+                                    </Expander.Header>
+
+                                    <ItemsRepeater ItemsSource="{x:Bind Details}">
+                                        <ItemsRepeater.Layout>
+                                            <StackLayout Spacing="6" />
+                                        </ItemsRepeater.Layout>
+                                        <ItemsRepeater.ItemTemplate>
+                                            <DataTemplate x:DataType="core:FootprintDetail">
+                                                <Grid ColumnSpacing="16">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="160" />
+                                                        <ColumnDefinition Width="*" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Grid.Column="0" Text="{x:Bind Label}"
+                                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                               TextWrapping="WrapWholeWords" />
+                                                    <TextBlock Grid.Column="1" Text="{x:Bind Value}"
+                                                               TextWrapping="Wrap" IsTextSelectionEnabled="True" />
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ItemsRepeater.ItemTemplate>
+                                    </ItemsRepeater>
+                                </Expander>
                             </DataTemplate>
                         </ItemsRepeater.ItemTemplate>
                     </ItemsRepeater>
