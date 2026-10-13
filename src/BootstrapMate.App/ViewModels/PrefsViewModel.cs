@@ -70,6 +70,32 @@ public partial class PrefsViewModel : ObservableObject
 
     public bool IsManaged(string key) => _managedKeys.Contains(key);
 
+    /// <summary>True when any value comes from the policy key; shows the policy note on the tab.</summary>
+    public bool HasPolicySettings => _managedKeys.Count > 0;
+
+    // ── Services ─────────────────────────────────────────────────
+
+    /// <summary>The services and scheduled tasks the installer creates, with their live state.</summary>
+    [ObservableProperty] private IReadOnlyList<FootprintStatus> _services = [];
+
+    [ObservableProperty] private bool _isServicesLoading;
+
+    /// <summary>Queries the installer's services and tasks off the UI thread.</summary>
+    public async Task LoadServicesAsync()
+    {
+        if (IsServicesLoading)
+            return;
+        IsServicesLoading = true;
+        try
+        {
+            Services = await Task.Run(InstallFootprint.QueryAll);
+        }
+        finally
+        {
+            IsServicesLoading = false;
+        }
+    }
+
     // ── Binding-Friendly Display Properties ──────────────────────
 
     public string VersionDisplay => $"Version {AppVersion}";
@@ -88,8 +114,6 @@ public partial class PrefsViewModel : ObservableObject
     }
 
     partial void OnNetworkTimeoutChanged(int value) => OnPropertyChanged(nameof(NetworkTimeoutValue));
-
-    // ── Policy Lock Properties (for x:Bind) ─────────────────────
 
     // ── Elevation State ─────────────────────────────────────────
 
@@ -154,19 +178,6 @@ public partial class PrefsViewModel : ObservableObject
     public bool CanEditCustomInstallPath => CanEdit("CustomInstallPath");
     public bool CanEditNetworkTimeout => CanEdit("NetworkTimeout");
 
-    public bool IsManifestUrlLocked => IsLocked("ManifestUrl");
-    public bool IsAuthHeaderLocked => IsLocked("AuthorizationHeader");
-    public bool IsSilentModeLocked => IsLocked("SilentMode");
-    public bool IsVerboseModeLocked => IsLocked("VerboseMode");
-    public bool IsDryRunLocked => IsLocked("DryRun");
-    public bool IsEnableDialogLocked => IsLocked("EnableDialog");
-    public bool IsDialogTitleLocked => IsLocked("DialogTitle");
-    public bool IsDialogMessageLocked => IsLocked("DialogMessage");
-    public bool IsDialogIconLocked => IsLocked("DialogIcon");
-    public bool IsBlurScreenLocked => IsLocked("BlurScreen");
-    public bool IsCustomInstallPathLocked => IsLocked("CustomInstallPath");
-    public bool IsNetworkTimeoutLocked => IsLocked("NetworkTimeout");
-
     // ── Save Status Display (for x:Bind) ────────────────────────
 
     public string SaveStatusGlyph => SaveStatus switch
@@ -203,6 +214,7 @@ public partial class PrefsViewModel : ObservableObject
         var config = configMgr.Config;
 
         _managedKeys = ManagementDetector.Instance.AllManagedKeys();
+        OnPropertyChanged(nameof(HasPolicySettings));
 
         ManifestUrl = config.ManifestUrl ?? "";
         HasExistingAuth = !string.IsNullOrEmpty(config.AuthorizationHeader);
@@ -234,6 +246,7 @@ public partial class PrefsViewModel : ObservableObject
         nameof(IsManifestPreviewLoading), nameof(ManifestPreviewContent), nameof(ManifestPreviewError),
         nameof(HasManifestPreviewContent), nameof(HasManifestPreviewError),
         nameof(UnlockError), nameof(HasUnlockError),
+        nameof(HasPolicySettings), nameof(Services), nameof(IsServicesLoading),
         "", // string.Empty from Load's bulk notify
     ];
 

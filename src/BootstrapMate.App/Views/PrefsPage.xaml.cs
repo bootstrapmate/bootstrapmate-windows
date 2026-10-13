@@ -26,6 +26,7 @@ public sealed partial class PrefsPage : Page
     {
         base.OnNavigatedTo(e);
         ViewModel.Load();
+        _ = ViewModel.LoadServicesAsync();
     }
 
     private void UnlockButton_Click(object sender, RoutedEventArgs e)
@@ -39,5 +40,10 @@ public sealed partial class PrefsPage : Page
     private async void PreviewManifestButton_Click(object sender, RoutedEventArgs e)
     {
         await ViewModel.FetchManifestPreviewAsync();
+    }
+
+    private async void RefreshServicesButton_Click(object sender, RoutedEventArgs e)
+    {
+        await ViewModel.LoadServicesAsync();
     }
 }
