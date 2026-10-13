@@ -6,13 +6,12 @@ namespace BootstrapMate.App.ViewModels;
 
 /// <summary>
 /// ViewModel for the Prefs tab. Mirrors macOS SettingsViewModel.
-/// Loads from ConfigManager and shows management lock state. Settings live in HKLM, so the tab is
-/// read-only unless this process is elevated; Unlock relaunches the app elevated on this tab.
-/// When elevated, non-managed settings auto-save to HKLM through ConfigManager.SaveMachineSettings.
+/// Loads from ConfigManager and shows management lock state. Every setting policy does not manage
+/// is editable; edits stay pending until Save writes them to HKLM, directly when this process is
+/// elevated and otherwise through an elevated, headless copy of the app (UAC at save time).
 /// </summary>
 public partial class PrefsViewModel : ObservableObject
 {
-    private System.Threading.Timer? _autoSaveTimer;
     private bool _isLoading;
 
     // ── Connection ───────────────────────────────────────────────
@@ -54,14 +53,14 @@ public partial class PrefsViewModel : ObservableObject
 
     [ObservableProperty] private SaveState _saveStatus = SaveState.Idle;
 
-    public enum SaveState { Idle, Saving, Saved, Failed }
+    public enum SaveState { Idle, Saving, Saved }
 
     partial void OnSaveStatusChanged(SaveState value)
     {
-        OnPropertyChanged(nameof(SaveStatusGlyph));
         OnPropertyChanged(nameof(SaveStatusMessage));
         OnPropertyChanged(nameof(IsSaveStatusVisible));
         OnPropertyChanged(nameof(IsSaveEnabled));
+        OnPropertyChanged(nameof(IsSaveBarVisible));
     }
 
     // ── Management State ─────────────────────────────────────────────
@@ -69,6 +68,32 @@ public partial class PrefsViewModel : ObservableObject
     private HashSet<string> _managedKeys = [];
 
     public bool IsManaged(string key) => _managedKeys.Contains(key);
+
+    /// <summary>True when any value comes from the policy key; shows the policy note on the tab.</summary>
+    public bool HasPolicySettings => _managedKeys.Count > 0;
+
+    // ── Services ─────────────────────────────────────────────────
+
+    /// <summary>The services and scheduled tasks the installer creates, with their live state.</summary>
+    [ObservableProperty] private IReadOnlyList<FootprintStatus> _services = [];
+
+    [ObservableProperty] private bool _isServicesLoading;
+
+    /// <summary>Queries the installer's services and tasks off the UI thread.</summary>
+    public async Task LoadServicesAsync()
+    {
+        if (IsServicesLoading)
+            return;
+        IsServicesLoading = true;
+        try
+        {
+            Services = await Task.Run(InstallFootprint.QueryAll);
+        }
+        finally
+        {
+            IsServicesLoading = false;
+        }
+    }
 
     // ── Binding-Friendly Display Properties ──────────────────────
 
@@ -89,55 +114,138 @@ public partial class PrefsViewModel : ObservableObject
 
     partial void OnNetworkTimeoutChanged(int value) => OnPropertyChanged(nameof(NetworkTimeoutValue));
 
-    // ── Policy Lock Properties (for x:Bind) ─────────────────────
+    // ── Pending Changes and Save ────────────────────────────────
 
-    // ── Elevation State ─────────────────────────────────────────
+    /// <summary>True when this process can write HKLM directly (elevated administrator token).</summary>
+    private static readonly bool IsElevated = PrefsElevation.IsProcessElevated();
 
-    /// <summary>True when this process can write HKLM (elevated administrator token).</summary>
-    public bool IsElevated { get; } = PrefsElevation.IsProcessElevated();
+    /// <summary>True once a setting is edited and until it is saved or discarded.</summary>
+    [ObservableProperty] private bool _hasPendingChanges;
 
-    public bool IsReadOnly => !IsElevated;
+    /// <summary>Why the last Save did not write, as "Not saved: …"; empty otherwise.</summary>
+    [ObservableProperty] private string _saveError = "";
 
-    [ObservableProperty] private string _unlockError = "";
+    public bool HasSaveError => !string.IsNullOrEmpty(SaveError);
 
-    public bool HasUnlockError => !string.IsNullOrEmpty(UnlockError);
+    partial void OnSaveErrorChanged(string value)
+    {
+        OnPropertyChanged(nameof(HasSaveError));
+        OnPropertyChanged(nameof(IsSaveBarVisible));
+    }
 
-    partial void OnUnlockErrorChanged(string value) => OnPropertyChanged(nameof(HasUnlockError));
+    partial void OnHasPendingChangesChanged(bool value) => OnPropertyChanged(nameof(IsSaveBarVisible));
+
+    /// <summary>The save bar shows while there is anything to save or report.</summary>
+    public bool IsSaveBarVisible => HasPendingChanges || HasSaveError || IsSaveStatusVisible;
 
     /// <summary>
-    /// Relaunches this app elevated through UAC, opening on the Prefs tab. Returns true when the
-    /// elevated instance started, so the caller can close this one. A cancelled UAC prompt
-    /// returns false quietly and leaves the tab read-only.
+    /// Writes the pending values to the machine settings, skipping anything policy manages.
+    /// Elevated, it writes directly; otherwise it raises UAC and runs this app's own executable
+    /// headless, sending the values over an ACL'd named pipe. A declined prompt keeps the edits pending.
     /// </summary>
-    public bool TryRelaunchElevated()
+    public async Task SaveAsync()
     {
-        UnlockError = "";
+        if (!HasPendingChanges || SaveStatus == SaveState.Saving)
+            return;
+
+        var payload = BuildPayload();
+        if (PrefsSettingsWriter.Validate(payload) is { } invalid)
+        {
+            SaveError = $"Not saved: {invalid}";
+            return;
+        }
+
+        SaveError = "";
+        SaveStatus = SaveState.Saving;
+        string? error;
         try
         {
-            var exe = Environment.ProcessPath;
-            if (string.IsNullOrEmpty(exe))
-            {
-                UnlockError = "Could not find the app's own executable to relaunch.";
-                return false;
-            }
-
-            using var process = System.Diagnostics.Process.Start(PrefsElevation.BuildElevatedRelaunch(exe));
-            return process is not null;
-        }
-        catch (Exception ex) when (PrefsElevation.IsElevationCancelled(ex))
-        {
-            return false;
+            error = IsElevated
+                ? await Task.Run(() => { PrefsSettingsWriter.Save(payload, _managedKeys); return (string?)null; })
+                : await SaveElevatedAsync(payload);
         }
         catch (Exception ex)
         {
-            UnlockError = $"Could not relaunch as administrator: {ex.Message}";
-            return false;
+            error = $"Not saved: {ex.Message}";
+        }
+
+        if (error is not null)
+        {
+            SaveStatus = SaveState.Idle;
+            SaveError = error;
+            return;
+        }
+
+        Load();
+        SaveStatus = SaveState.Saved;
+    }
+
+    /// <summary>Drops the pending edits and shows the saved values again.</summary>
+    public void Discard()
+    {
+        SaveError = "";
+        SaveStatus = SaveState.Idle;
+        Load();
+    }
+
+    private static async Task<string?> SaveElevatedAsync(PrefsSettingsPayload payload)
+    {
+        var exe = Environment.ProcessPath;
+        if (string.IsNullOrEmpty(exe))
+            return "Not saved: could not find the app's own executable.";
+
+        // The values travel over a pipe only this user, Administrators and SYSTEM can open,
+        // never through a file: they can include a credential header.
+        var pipeName = PrefsSettingsWriter.NewPipeName();
+        using var pipe = PrefsSettingsWriter.CreatePipe(pipeName);
+
+        System.Diagnostics.Process? process;
+        try
+        {
+            process = System.Diagnostics.Process.Start(PrefsElevation.BuildElevatedApply(exe, pipeName));
+        }
+        catch (Exception ex) when (PrefsElevation.IsElevationCancelled(ex))
+        {
+            return "Not saved: administrator approval was declined.";
+        }
+        if (process is null)
+            return "Not saved: the elevated writer did not start.";
+
+        using (process)
+        {
+            using var timeout = new CancellationTokenSource(PrefsSettingsWriter.ConnectTimeout);
+            var send = PrefsSettingsWriter.SendAsync(pipe, payload, timeout.Token);
+            var exited = process.WaitForExitAsync(timeout.Token);
+            await Task.WhenAny(send, exited);
+
+            if (!send.IsCompletedSuccessfully)
+            {
+                timeout.Cancel();
+                try { await send; } catch { }
+                return process.HasExited
+                    ? $"Not saved: {PrefsSettingsWriter.DescribeExitCode(process.ExitCode)}"
+                    : "Not saved: the elevated writer did not connect in time.";
+            }
+
+            using var finish = new CancellationTokenSource(PrefsSettingsWriter.ConnectTimeout);
+            try
+            {
+                await process.WaitForExitAsync(finish.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                return "Not saved: the elevated writer did not finish in time.";
+            }
+
+            return process.ExitCode == PrefsSettingsWriter.ExitSaved
+                ? null
+                : $"Not saved: {PrefsSettingsWriter.DescribeExitCode(process.ExitCode)}";
         }
     }
 
-    // ── Editability (elevated and not managed by policy) ────────
+    // ── Editability (only policy locks a setting) ───────────────
 
-    private bool CanEdit(string field) => PrefsElevation.CanEdit(IsElevated, IsLocked(field));
+    private bool CanEdit(string field) => PrefsPolicy.CanEdit(field, _managedKeys);
 
     private bool IsLocked(string field) => PrefsPolicy.IsLocked(field, _managedKeys);
 
@@ -154,34 +262,12 @@ public partial class PrefsViewModel : ObservableObject
     public bool CanEditCustomInstallPath => CanEdit("CustomInstallPath");
     public bool CanEditNetworkTimeout => CanEdit("NetworkTimeout");
 
-    public bool IsManifestUrlLocked => IsLocked("ManifestUrl");
-    public bool IsAuthHeaderLocked => IsLocked("AuthorizationHeader");
-    public bool IsSilentModeLocked => IsLocked("SilentMode");
-    public bool IsVerboseModeLocked => IsLocked("VerboseMode");
-    public bool IsDryRunLocked => IsLocked("DryRun");
-    public bool IsEnableDialogLocked => IsLocked("EnableDialog");
-    public bool IsDialogTitleLocked => IsLocked("DialogTitle");
-    public bool IsDialogMessageLocked => IsLocked("DialogMessage");
-    public bool IsDialogIconLocked => IsLocked("DialogIcon");
-    public bool IsBlurScreenLocked => IsLocked("BlurScreen");
-    public bool IsCustomInstallPathLocked => IsLocked("CustomInstallPath");
-    public bool IsNetworkTimeoutLocked => IsLocked("NetworkTimeout");
-
     // ── Save Status Display (for x:Bind) ────────────────────────
-
-    public string SaveStatusGlyph => SaveStatus switch
-    {
-        SaveState.Saving => "\uE895",
-        SaveState.Saved  => "\uE73E",
-        SaveState.Failed => "\uE783",
-        _ => ""
-    };
 
     public string SaveStatusMessage => SaveStatus switch
     {
         SaveState.Saving => "Saving...",
         SaveState.Saved  => "Saved",
-        SaveState.Failed => "Save failed — check permissions",
         _ => ""
     };
 
@@ -203,6 +289,7 @@ public partial class PrefsViewModel : ObservableObject
         var config = configMgr.Config;
 
         _managedKeys = ManagementDetector.Instance.AllManagedKeys();
+        OnPropertyChanged(nameof(HasPolicySettings));
 
         ManifestUrl = config.ManifestUrl ?? "";
         HasExistingAuth = !string.IsNullOrEmpty(config.AuthorizationHeader);
@@ -221,6 +308,7 @@ public partial class PrefsViewModel : ObservableObject
         // Notify all bindings (management locks, computed display properties)
         OnPropertyChanged(string.Empty);
 
+        HasPendingChanges = false;
         _isLoading = false;
     }
 
@@ -228,12 +316,13 @@ public partial class PrefsViewModel : ObservableObject
 
     private static readonly HashSet<string> _nonSettingProperties =
     [
-        nameof(SaveStatus), nameof(SaveStatusGlyph), nameof(SaveStatusMessage),
+        nameof(SaveStatus), nameof(SaveStatusMessage), nameof(HasPendingChanges),
+        nameof(SaveError), nameof(HasSaveError), nameof(IsSaveBarVisible),
         nameof(IsSaveStatusVisible), nameof(IsSaveEnabled), nameof(HasExistingAuth),
         nameof(AuthPlaceholderText), nameof(NetworkTimeoutValue), nameof(VersionDisplay),
         nameof(IsManifestPreviewLoading), nameof(ManifestPreviewContent), nameof(ManifestPreviewError),
         nameof(HasManifestPreviewContent), nameof(HasManifestPreviewError),
-        nameof(UnlockError), nameof(HasUnlockError),
+        nameof(HasPolicySettings), nameof(Services), nameof(IsServicesLoading),
         "", // string.Empty from Load's bulk notify
     ];
 
@@ -241,15 +330,13 @@ public partial class PrefsViewModel : ObservableObject
     {
         base.OnPropertyChanged(e);
 
-        // Not elevated: HKLM is not writable and the tab is read-only, so never save.
-        if (_isLoading || !IsElevated || _nonSettingProperties.Contains(e.PropertyName ?? ""))
+        // A setting changed by the user: hold it until Save or Discard.
+        if (_isLoading || _nonSettingProperties.Contains(e.PropertyName ?? ""))
             return;
 
-        _autoSaveTimer?.Dispose();
-        _autoSaveTimer = new System.Threading.Timer(_ =>
-        {
-            try { ConfigManager.SaveMachineSettings(BuildConfig(), PageKeys); } catch { }
-        }, null, 500, System.Threading.Timeout.Infinite);
+        HasPendingChanges = true;
+        if (SaveStatus == SaveState.Saved)
+            SaveStatus = SaveState.Idle;
     }
 
     // ── Build Run Arguments ──────────────────────────────────────
@@ -291,18 +378,7 @@ public partial class PrefsViewModel : ObservableObject
 
     // ── Private ──────────────────────────────────────────────────
 
-    /// <summary>
-    /// The machine settings this tab edits. Saving writes only these, so values the tab does not
-    /// show (reporting, signature checks, baseline interval) keep whatever HKLM already holds.
-    /// </summary>
-    private static readonly string[] PageKeys =
-    [
-        "ManifestUrl", "AuthorizationHeader", "SilentMode", "VerboseMode", "DryRun",
-        "EnableDialog", "NoDialog", "DialogTitle", "DialogMessage", "DialogIcon", "BlurScreen",
-        "CustomInstallPath", "NetworkTimeout",
-    ];
-
-    private BootstrapMateConfig BuildConfig() => new()
+    private PrefsSettingsPayload BuildPayload() => new()
     {
         ManifestUrl = ManifestUrl,
         AuthorizationHeader = string.IsNullOrWhiteSpace(AuthorizationHeader) ? null : AuthorizationHeader,
@@ -310,7 +386,6 @@ public partial class PrefsViewModel : ObservableObject
         VerboseMode = VerboseMode,
         DryRun = DryRun,
         EnableDialog = EnableDialog,
-        NoDialog = !EnableDialog,
         DialogTitle = DialogTitle,
         DialogMessage = DialogMessage,
         DialogIcon = string.IsNullOrWhiteSpace(DialogIcon) ? null : DialogIcon,

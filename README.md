@@ -47,7 +47,7 @@ shared between the two views and is never removed.
 Deliver a header through policy as usual. The next elevated run moves it into that key and
 blanks the copy in policy, which every user can read. The policy value is emptied, not deleted,
 so the setting still shows as managed. The GUI shows a saved header masked and saves a new one
-only after Unlock. BootstrapMate never writes a header to its logs, `session.json` or
+when you click Save on the Prefs tab. BootstrapMate never writes a header to its logs, `session.json` or
 `last-run.json`, and it redacts `--headers` from every logged command line.
 
 ## Reporting
@@ -317,6 +317,14 @@ no simulated install, so a policy-set `DryRun` exits `1` without installing anyt
 policy for each, and either one locks the Prefs tab's "Show progress dialog" switch. `DialogIcon`
 sets the dialog's icon. `SilentMode` and `VerboseMode` from policy or settings turn
 those modes on, and a CLI switch cannot turn them off.
+
+The GUI Prefs tab edits every setting that policy does not manage; policy-set fields show in gray
+under one note at the top of the tab. Edits stay pending until you click Save, which writes them to
+`HKLM\SOFTWARE\BootstrapMate\Settings`. An unelevated GUI asks for administrator approval at that
+point and runs a headless, elevated copy of itself (`--apply-settings <pipe>`). The values travel
+over a named pipe that only the user, Administrators and SYSTEM can open, never through a file.
+The writer re-reads policy and never writes a managed value. Declining the prompt keeps the edits
+pending.
 
 ## csharpDialog authorisation key
 

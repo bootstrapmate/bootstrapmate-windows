@@ -25,6 +25,8 @@
     <!-- Suppress MVVMTK0045: field-based [ObservableProperty] AOT warning.
          Partial property approach fails with current WinUI XAML compiler + CsWinRT combination. -->
     <NoWarn>$(NoWarn);MVVMTK0045</NoWarn>
+    <!-- Program.cs owns Main so the headless settings writer starts without XAML. -->
+    <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
   </PropertyGroup>
 
   <!-- Build timestamp for version display -->
