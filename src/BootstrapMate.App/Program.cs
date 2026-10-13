@@ -4,18 +4,18 @@ namespace BootstrapMate.App;
 
 /// <summary>
 /// Entry point. Replaces the XAML-generated Main (DISABLE_XAML_GENERATED_MAIN) so the elevated
-/// settings writer (--apply-settings &lt;file&gt;) runs headless and exits before any window exists.
+/// settings writer (--apply-settings &lt;pipe&gt;) runs headless and exits before any window exists.
 /// </summary>
 public static class Program
 {
     [STAThread]
     private static int Main(string[] args)
     {
-        if (PrefsSettingsFile.IsApplyRequest(args))
+        if (PrefsSettingsWriter.IsApplyRequest(args))
         {
-            return PrefsSettingsFile.ApplyPath(args) is { } path
-                ? PrefsSettingsFile.Apply(path)
-                : PrefsSettingsFile.ExitUsage;
+            return PrefsSettingsWriter.ApplyPipeName(args) is { } pipeName
+                ? PrefsSettingsWriter.Apply(pipeName)
+                : PrefsSettingsWriter.ExitUsage;
         }
 
         WinRT.ComWrappersSupport.InitializeComWrappers();

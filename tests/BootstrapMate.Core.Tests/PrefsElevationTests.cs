@@ -34,20 +34,20 @@ public class PrefsElevationTests
     public void SaveRunsTheSameExeElevatedAndHeadless()
     {
         var exe = @"C:\Program Files\BootstrapMate\Managed Bootstrap Install.exe";
-        var file = @"C:\Users\someone\AppData\Local\Temp\BootstrapMate-settings-1.json";
-        var info = PrefsElevation.BuildElevatedApply(exe, file);
+        var pipe = "BootstrapMate-settings-1";
+        var info = PrefsElevation.BuildElevatedApply(exe, pipe);
 
         Assert.Equal(exe, info.FileName);
-        Assert.Equal($"--apply-settings \"{file}\"", info.Arguments);
+        Assert.Equal("--apply-settings \"BootstrapMate-settings-1\"", info.Arguments);
         Assert.Equal("runas", info.Verb);
         Assert.True(info.UseShellExecute);
         Assert.Equal(@"C:\Program Files\BootstrapMate", info.WorkingDirectory);
     }
 
     [Fact]
-    public void SaveNeedsAnExeAndAFile()
+    public void SaveNeedsAnExeAndAPipe()
     {
-        Assert.ThrowsAny<ArgumentException>(() => PrefsElevation.BuildElevatedApply(" ", "x.json"));
+        Assert.ThrowsAny<ArgumentException>(() => PrefsElevation.BuildElevatedApply(" ", "pipe"));
         Assert.ThrowsAny<ArgumentException>(() => PrefsElevation.BuildElevatedApply("app.exe", ""));
     }
 }

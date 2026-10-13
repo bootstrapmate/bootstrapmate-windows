@@ -7,7 +7,7 @@ namespace BootstrapMate.Core;
 /// <summary>
 /// Elevation for saving the GUI Prefs tab. Settings live in HKLM, so an unelevated GUI raises
 /// UAC only when the user clicks Save: it relaunches its own executable elevated and headless
-/// to write the pending values (see <see cref="PrefsSettingsFile"/>).
+/// to write the pending values (see <see cref="PrefsSettingsWriter"/>).
 /// </summary>
 public static class PrefsElevation
 {
@@ -37,16 +37,16 @@ public static class PrefsElevation
 
     /// <summary>
     /// Start info that runs <paramref name="exePath"/> elevated and headless to write the
-    /// settings file at <paramref name="settingsPath"/>.
+    /// settings sent over the named pipe <paramref name="pipeName"/>.
     /// </summary>
-    public static ProcessStartInfo BuildElevatedApply(string exePath, string settingsPath)
+    public static ProcessStartInfo BuildElevatedApply(string exePath, string pipeName)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(exePath);
-        ArgumentException.ThrowIfNullOrWhiteSpace(settingsPath);
+        ArgumentException.ThrowIfNullOrWhiteSpace(pipeName);
         return new ProcessStartInfo
         {
             FileName = exePath,
-            Arguments = $"{PrefsSettingsFile.ApplyArgument} \"{settingsPath}\"",
+            Arguments = $"{PrefsSettingsWriter.ApplyArgument} \"{pipeName}\"",
             UseShellExecute = true,
             Verb = "runas",
             WorkingDirectory = Path.GetDirectoryName(exePath) ?? string.Empty,

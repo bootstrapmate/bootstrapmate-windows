@@ -1,5 +1,6 @@
-using System.Security.AccessControl;
+using System.IO.Pipes;
 using System.Security.Principal;
+using System.Text;
 using System.Text.Json;
 
 namespace BootstrapMate.Core;
@@ -23,20 +24,25 @@ public sealed class PrefsSettingsPayload
 }
 
 /// <summary>
-/// Saving the Prefs tab. Settings live in HKLM, so an unelevated GUI writes its pending values to
-/// a JSON file in the user's temp folder and relaunches its own executable elevated with
-/// <see cref="ApplyArgument"/>; that headless instance writes them and exits without a window.
-/// The writer re-reads policy itself and never writes a policy-managed value.
+/// Saving the Prefs tab. Settings live in HKLM, so an unelevated GUI relaunches its own executable
+/// elevated with <see cref="ApplyArgument"/> and a pipe name, then sends the pending values as JSON
+/// over that named pipe; nothing touches disk, since the values can include a credential header.
+/// The pipe admits only the current user, Administrators and SYSTEM, so an over-the-shoulder admin
+/// account can read it. The headless writer re-reads policy itself, never writes a policy-managed
+/// value, and exits without a window.
 /// </summary>
-public static class PrefsSettingsFile
+public static class PrefsSettingsWriter
 {
-    /// <summary>Command-line switch, followed by the payload path, for the headless writer.</summary>
+    /// <summary>Command-line switch, followed by the pipe name, for the headless writer.</summary>
     public const string ApplyArgument = "--apply-settings";
 
     public const int ExitSaved = 0;
     public const int ExitFailed = 1;
     public const int ExitUsage = 2;
     public const int ExitInvalid = 3;
+
+    /// <summary>How long either side waits for the other; covers the UAC prompt.</summary>
+    public static readonly TimeSpan ConnectTimeout = TimeSpan.FromSeconds(60);
 
     public const int MinNetworkTimeout = 10;
     public const int MaxNetworkTimeout = 600;
@@ -47,8 +53,8 @@ public static class PrefsSettingsFile
     public static bool IsApplyRequest(IReadOnlyList<string> args) =>
         args.Any(a => string.Equals(a?.Trim(), ApplyArgument, StringComparison.OrdinalIgnoreCase));
 
-    /// <summary>The payload path that follows <see cref="ApplyArgument"/>, or null when missing.</summary>
-    public static string? ApplyPath(IReadOnlyList<string> args)
+    /// <summary>The pipe name that follows <see cref="ApplyArgument"/>, or null when missing.</summary>
+    public static string? ApplyPipeName(IReadOnlyList<string> args)
     {
         for (var i = 0; i < args.Count - 1; i++)
         {
@@ -114,45 +120,63 @@ public static class PrefsSettingsFile
     public static void Save(PrefsSettingsPayload payload, IReadOnlySet<string> managedKeys) =>
         ConfigManager.SaveMachineSettings(ToConfig(payload), WritableKeys(payload, managedKeys));
 
+    /// <summary>A new, unguessable pipe name for one save.</summary>
+    public static string NewPipeName() => $"BootstrapMate-settings-{Guid.NewGuid():N}";
+
     /// <summary>
-    /// Writes the payload to a new file in the user's temp folder, readable by the user and
-    /// by Administrators (an over-the-shoulder admin elevates as a different account).
+    /// Creates the one-instance outbound pipe the GUI sends the payload on. Only the current
+    /// user, BUILTIN\Administrators and SYSTEM may open it.
     /// </summary>
-    public static string WriteTempFile(PrefsSettingsPayload payload)
+    public static NamedPipeServerStream CreatePipe(string pipeName)
     {
-        var path = Path.Combine(Path.GetTempPath(), $"BootstrapMate-settings-{Guid.NewGuid():N}.json");
-        File.WriteAllText(path, Serialize(payload));
-        if (OperatingSystem.IsWindows())
+        var security = new PipeSecurity();
+        using (var identity = WindowsIdentity.GetCurrent())
         {
-            try
-            {
-                var file = new FileInfo(path);
-                var security = file.GetAccessControl();
-                security.AddAccessRule(new FileSystemAccessRule(
-                    new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null),
-                    FileSystemRights.Read | FileSystemRights.Delete, AccessControlType.Allow));
-                file.SetAccessControl(security);
-            }
-            catch
-            {
-                // Same-account elevation still reads it through the owner's access.
-            }
+            security.AddAccessRule(new PipeAccessRule(identity.User!, PipeAccessRights.FullControl, System.Security.AccessControl.AccessControlType.Allow));
         }
-        return path;
+        foreach (var sid in new[] { WellKnownSidType.BuiltinAdministratorsSid, WellKnownSidType.LocalSystemSid })
+        {
+            security.AddAccessRule(new PipeAccessRule(new SecurityIdentifier(sid, null),
+                PipeAccessRights.ReadWrite, System.Security.AccessControl.AccessControlType.Allow));
+        }
+        return NamedPipeServerStreamAcl.Create(pipeName, PipeDirection.Out, 1, PipeTransmissionMode.Byte,
+            PipeOptions.Asynchronous, 0, 0, security);
+    }
+
+    /// <summary>Waits for the writer to connect, sends the payload and closes the pipe.</summary>
+    public static async Task SendAsync(NamedPipeServerStream pipe, PrefsSettingsPayload payload, CancellationToken cancellationToken)
+    {
+        await pipe.WaitForConnectionAsync(cancellationToken).ConfigureAwait(false);
+        var bytes = Encoding.UTF8.GetBytes(Serialize(payload));
+        await pipe.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
+        await pipe.FlushAsync(cancellationToken).ConfigureAwait(false);
+        pipe.WaitForPipeDrain();
+        pipe.Disconnect();
+    }
+
+    /// <summary>Connects to the GUI's pipe and reads the payload JSON to the end.</summary>
+    public static string Receive(string pipeName, TimeSpan timeout)
+    {
+        using var client = new NamedPipeClientStream(".", pipeName, PipeDirection.In);
+        client.Connect((int)timeout.TotalMilliseconds);
+        using var reader = new StreamReader(client, Encoding.UTF8);
+        return reader.ReadToEnd();
     }
 
     /// <summary>
-    /// The headless writer: reads the payload, re-reads policy, validates and saves. Never
-    /// creates a window. Returns one of the Exit* codes.
+    /// The headless writer: reads the payload from the pipe, re-reads policy, validates and saves.
+    /// Never creates a window. Returns one of the Exit* codes.
     /// </summary>
-    public static int Apply(string path)
+    public static int Apply(string pipeName) => Apply(pipeName, ConnectTimeout);
+
+    public static int Apply(string pipeName, TimeSpan timeout)
     {
         PrefsSettingsPayload? payload;
         try
         {
-            payload = Deserialize(File.ReadAllText(path));
+            payload = Deserialize(Receive(pipeName, timeout));
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        catch (Exception ex) when (ex is IOException or TimeoutException or UnauthorizedAccessException or JsonException)
         {
             return ExitUsage;
         }
@@ -175,7 +199,7 @@ public static class PrefsSettingsFile
     public static string DescribeExitCode(int code) => code switch
     {
         ExitSaved => "saved",
-        ExitUsage => "the settings file could not be read.",
+        ExitUsage => "the settings could not be passed to the elevated writer.",
         ExitInvalid => "a value is not valid.",
         _ => $"the machine settings could not be written (exit code {code}).",
     };

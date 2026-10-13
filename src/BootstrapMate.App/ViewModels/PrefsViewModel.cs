@@ -141,7 +141,7 @@ public partial class PrefsViewModel : ObservableObject
     /// <summary>
     /// Writes the pending values to the machine settings, skipping anything policy manages.
     /// Elevated, it writes directly; otherwise it raises UAC and runs this app's own executable
-    /// headless with the values in a temp file. A declined prompt keeps the edits pending.
+    /// headless, sending the values over an ACL'd named pipe. A declined prompt keeps the edits pending.
     /// </summary>
     public async Task SaveAsync()
     {
@@ -149,7 +149,7 @@ public partial class PrefsViewModel : ObservableObject
             return;
 
         var payload = BuildPayload();
-        if (PrefsSettingsFile.Validate(payload) is { } invalid)
+        if (PrefsSettingsWriter.Validate(payload) is { } invalid)
         {
             SaveError = $"Not saved: {invalid}";
             return;
@@ -161,7 +161,7 @@ public partial class PrefsViewModel : ObservableObject
         try
         {
             error = IsElevated
-                ? await Task.Run(() => { PrefsSettingsFile.Save(payload, _managedKeys); return (string?)null; })
+                ? await Task.Run(() => { PrefsSettingsWriter.Save(payload, _managedKeys); return (string?)null; })
                 : await SaveElevatedAsync(payload);
         }
         catch (Exception ex)
@@ -194,24 +194,52 @@ public partial class PrefsViewModel : ObservableObject
         if (string.IsNullOrEmpty(exe))
             return "Not saved: could not find the app's own executable.";
 
-        var path = PrefsSettingsFile.WriteTempFile(payload);
+        // The values travel over a pipe only this user, Administrators and SYSTEM can open,
+        // never through a file: they can include a credential header.
+        var pipeName = PrefsSettingsWriter.NewPipeName();
+        using var pipe = PrefsSettingsWriter.CreatePipe(pipeName);
+
+        System.Diagnostics.Process? process;
         try
         {
-            using var process = System.Diagnostics.Process.Start(PrefsElevation.BuildElevatedApply(exe, path));
-            if (process is null)
-                return "Not saved: the elevated writer did not start.";
-            await process.WaitForExitAsync();
-            return process.ExitCode == PrefsSettingsFile.ExitSaved
-                ? null
-                : $"Not saved: {PrefsSettingsFile.DescribeExitCode(process.ExitCode)}";
+            process = System.Diagnostics.Process.Start(PrefsElevation.BuildElevatedApply(exe, pipeName));
         }
         catch (Exception ex) when (PrefsElevation.IsElevationCancelled(ex))
         {
             return "Not saved: administrator approval was declined.";
         }
-        finally
+        if (process is null)
+            return "Not saved: the elevated writer did not start.";
+
+        using (process)
         {
-            try { File.Delete(path); } catch { }
+            using var timeout = new CancellationTokenSource(PrefsSettingsWriter.ConnectTimeout);
+            var send = PrefsSettingsWriter.SendAsync(pipe, payload, timeout.Token);
+            var exited = process.WaitForExitAsync(timeout.Token);
+            await Task.WhenAny(send, exited);
+
+            if (!send.IsCompletedSuccessfully)
+            {
+                timeout.Cancel();
+                try { await send; } catch { }
+                return process.HasExited
+                    ? $"Not saved: {PrefsSettingsWriter.DescribeExitCode(process.ExitCode)}"
+                    : "Not saved: the elevated writer did not connect in time.";
+            }
+
+            using var finish = new CancellationTokenSource(PrefsSettingsWriter.ConnectTimeout);
+            try
+            {
+                await process.WaitForExitAsync(finish.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                return "Not saved: the elevated writer did not finish in time.";
+            }
+
+            return process.ExitCode == PrefsSettingsWriter.ExitSaved
+                ? null
+                : $"Not saved: {PrefsSettingsWriter.DescribeExitCode(process.ExitCode)}";
         }
     }
 

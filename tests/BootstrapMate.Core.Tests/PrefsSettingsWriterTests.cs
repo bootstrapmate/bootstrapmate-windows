@@ -3,7 +3,7 @@ using Xunit;
 
 namespace BootstrapMate.Core.Tests;
 
-public class PrefsSettingsFileTests
+public class PrefsSettingsWriterTests
 {
     private static HashSet<string> Managed(params string[] keys) =>
         new(keys, StringComparer.OrdinalIgnoreCase);
@@ -28,38 +28,40 @@ public class PrefsSettingsFileTests
     public void ThePayloadRoundTripsThroughJson()
     {
         var original = Sample();
-        var copy = PrefsSettingsFile.Deserialize(PrefsSettingsFile.Serialize(original));
+        var copy = PrefsSettingsWriter.Deserialize(PrefsSettingsWriter.Serialize(original));
 
         Assert.NotNull(copy);
         Assert.Equivalent(original, copy, strict: true);
     }
 
     [Fact]
-    public void ThePayloadRoundTripsThroughATempFile()
+    public async Task ThePayloadRoundTripsThroughTheNamedPipe()
     {
-        var path = PrefsSettingsFile.WriteTempFile(Sample());
-        try
-        {
-            Assert.StartsWith(Path.GetTempPath(), path);
-            Assert.Equivalent(Sample(), PrefsSettingsFile.Deserialize(File.ReadAllText(path)), strict: true);
-        }
-        finally
-        {
-            File.Delete(path);
-        }
+        var name = PrefsSettingsWriter.NewPipeName();
+        using var pipe = PrefsSettingsWriter.CreatePipe(name);
+        var send = PrefsSettingsWriter.SendAsync(pipe, Sample(), CancellationToken.None);
+
+        var json = await Task.Run(() => PrefsSettingsWriter.Receive(name, TimeSpan.FromSeconds(10)));
+        await send;
+
+        Assert.Equivalent(Sample(), PrefsSettingsWriter.Deserialize(json), strict: true);
     }
+
+    [Fact]
+    public void EachSaveGetsItsOwnPipeName() =>
+        Assert.NotEqual(PrefsSettingsWriter.NewPipeName(), PrefsSettingsWriter.NewPipeName());
 
     [Fact]
     public void WithNoPolicyEveryPageKeyIsWritten() =>
         Assert.Equal(
             ["ManifestUrl", "AuthorizationHeader", "SilentMode", "VerboseMode", "DryRun", "EnableDialog", "NoDialog",
              "DialogTitle", "DialogMessage", "DialogIcon", "BlurScreen", "CustomInstallPath", "NetworkTimeout"],
-            PrefsSettingsFile.WritableKeys(Sample(), Managed()));
+            PrefsSettingsWriter.WritableKeys(Sample(), Managed()));
 
     [Fact]
     public void TheWriterSkipsPolicyManagedKeys()
     {
-        var keys = PrefsSettingsFile.WritableKeys(Sample(), Managed("ManifestUrl", "networktimeout"));
+        var keys = PrefsSettingsWriter.WritableKeys(Sample(), Managed("ManifestUrl", "networktimeout"));
         Assert.DoesNotContain("ManifestUrl", keys);
         Assert.DoesNotContain("NetworkTimeout", keys);
         Assert.Contains("DialogTitle", keys);
@@ -68,7 +70,7 @@ public class PrefsSettingsFileTests
     [Fact]
     public void ANoDialogPolicySkipsBothDialogSwitchKeys()
     {
-        var keys = PrefsSettingsFile.WritableKeys(Sample(), Managed("NoDialog"));
+        var keys = PrefsSettingsWriter.WritableKeys(Sample(), Managed("NoDialog"));
         Assert.DoesNotContain("EnableDialog", keys);
         Assert.DoesNotContain("NoDialog", keys);
     }
@@ -78,13 +80,13 @@ public class PrefsSettingsFileTests
     {
         var payload = Sample();
         payload.AuthorizationHeader = "";
-        Assert.DoesNotContain("AuthorizationHeader", PrefsSettingsFile.WritableKeys(payload, Managed()));
+        Assert.DoesNotContain("AuthorizationHeader", PrefsSettingsWriter.WritableKeys(payload, Managed()));
     }
 
     [Fact]
     public void TheDialogSwitchIsStoredAsBothKeys()
     {
-        var config = PrefsSettingsFile.ToConfig(Sample());
+        var config = PrefsSettingsWriter.ToConfig(Sample());
         Assert.False(config.EnableDialog);
         Assert.True(config.NoDialog);
     }
@@ -98,47 +100,46 @@ public class PrefsSettingsFileTests
     {
         var payload = Sample();
         payload.NetworkTimeout = timeout;
-        Assert.Equal(valid, PrefsSettingsFile.Validate(payload) is null);
+        Assert.Equal(valid, PrefsSettingsWriter.Validate(payload) is null);
     }
 
     [Fact]
     public void TheApplySwitchCarriesItsPath()
     {
-        string[] args = ["--apply-settings", @"C:\t\s.json"];
-        Assert.True(PrefsSettingsFile.IsApplyRequest(args));
-        Assert.Equal(@"C:\t\s.json", PrefsSettingsFile.ApplyPath(args));
+        string[] args = ["--apply-settings", "BootstrapMate-settings-abc"];
+        Assert.True(PrefsSettingsWriter.IsApplyRequest(args));
+        Assert.Equal("BootstrapMate-settings-abc", PrefsSettingsWriter.ApplyPipeName(args));
     }
 
     [Fact]
-    public void TheApplySwitchWithoutAPathHasNoPath()
+    public void TheApplySwitchWithoutAPipeHasNoPipe()
     {
         string[] args = ["--apply-settings"];
-        Assert.True(PrefsSettingsFile.IsApplyRequest(args));
-        Assert.Null(PrefsSettingsFile.ApplyPath(args));
+        Assert.True(PrefsSettingsWriter.IsApplyRequest(args));
+        Assert.Null(PrefsSettingsWriter.ApplyPipeName(args));
     }
 
     [Fact]
     public void ANormalLaunchIsNotAnApplyRequest() =>
-        Assert.False(PrefsSettingsFile.IsApplyRequest(["--prefs"]));
+        Assert.False(PrefsSettingsWriter.IsApplyRequest(["--prefs"]));
 
     [Fact]
-    public void AMissingFileIsAUsageError() =>
-        Assert.Equal(PrefsSettingsFile.ExitUsage,
-            PrefsSettingsFile.Apply(Path.Combine(Path.GetTempPath(), $"missing-{Guid.NewGuid():N}.json")));
+    public void NoPipeIsAUsageError() =>
+        Assert.Equal(PrefsSettingsWriter.ExitUsage,
+            PrefsSettingsWriter.Apply(PrefsSettingsWriter.NewPipeName(), TimeSpan.FromMilliseconds(200)));
 
     [Fact]
-    public void AnInvalidPayloadIsRejectedBeforeWriting()
+    public async Task AnInvalidPayloadIsRejectedBeforeWriting()
     {
         var payload = Sample();
         payload.NetworkTimeout = 5;
-        var path = PrefsSettingsFile.WriteTempFile(payload);
-        try
-        {
-            Assert.Equal(PrefsSettingsFile.ExitInvalid, PrefsSettingsFile.Apply(path));
-        }
-        finally
-        {
-            File.Delete(path);
-        }
+        var name = PrefsSettingsWriter.NewPipeName();
+        using var pipe = PrefsSettingsWriter.CreatePipe(name);
+        var send = PrefsSettingsWriter.SendAsync(pipe, payload, CancellationToken.None);
+
+        var code = await Task.Run(() => PrefsSettingsWriter.Apply(name, TimeSpan.FromSeconds(10)));
+        await send;
+
+        Assert.Equal(PrefsSettingsWriter.ExitInvalid, code);
     }
 }

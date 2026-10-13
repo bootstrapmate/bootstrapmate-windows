@@ -321,8 +321,10 @@ those modes on, and a CLI switch cannot turn them off.
 The GUI Prefs tab edits every setting that policy does not manage; policy-set fields show in gray
 under one note at the top of the tab. Edits stay pending until you click Save, which writes them to
 `HKLM\SOFTWARE\BootstrapMate\Settings`. An unelevated GUI asks for administrator approval at that
-point and writes through a headless, elevated copy of itself (`--apply-settings <file>`), which
-re-reads policy and never writes a managed value. Declining the prompt keeps the edits pending.
+point and runs a headless, elevated copy of itself (`--apply-settings <pipe>`). The values travel
+over a named pipe that only the user, Administrators and SYSTEM can open, never through a file.
+The writer re-reads policy and never writes a managed value. Declining the prompt keeps the edits
+pending.
 
 ## csharpDialog authorisation key
 
