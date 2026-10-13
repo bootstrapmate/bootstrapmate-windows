@@ -29,12 +29,14 @@ public sealed partial class PrefsPage : Page
         _ = ViewModel.LoadServicesAsync();
     }
 
-    private void UnlockButton_Click(object sender, RoutedEventArgs e)
+    private async void SaveButton_Click(object sender, RoutedEventArgs e)
     {
-        // Once the elevated copy has started (UAC accepted), this read-only instance closes.
-        // A cancelled UAC prompt returns false and the tab simply stays read-only.
-        if (ViewModel.TryRelaunchElevated())
-            Application.Current.Exit();
+        await ViewModel.SaveAsync();
+    }
+
+    private void DiscardButton_Click(object sender, RoutedEventArgs e)
+    {
+        ViewModel.Discard();
     }
 
     private async void PreviewManifestButton_Click(object sender, RoutedEventArgs e)

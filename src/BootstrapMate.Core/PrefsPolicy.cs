@@ -33,6 +33,11 @@ public static class PrefsPolicy
     }
 
     /// <summary>
+    /// A field is editable unless policy manages it; elevation is asked for only at save time.
+    /// </summary>
+    public static bool CanEdit(string field, IReadOnlySet<string> managedKeys) => !IsLocked(field, managedKeys);
+
+    /// <summary>
     /// Whether the progress dialog is shown: <c>EnableDialog</c> false or <c>NoDialog</c> true
     /// turns it off, wherever each comes from.
     /// </summary>
