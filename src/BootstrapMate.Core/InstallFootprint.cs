@@ -10,16 +10,35 @@ public enum FootprintKind { Service, ScheduledTask }
 /// <summary>One entry of the installer's footprint: what it is called and what it is for.</summary>
 public sealed record FootprintItem(string FriendlyName, string Name, FootprintKind Kind, string Description);
 
-/// <summary>The live state of one footprint entry, already in plain words for display.</summary>
+/// <summary>One label/value row of an expanded Services entry.</summary>
+public sealed record FootprintDetail(string Label, string Value);
+
+/// <summary>
+/// The live state of one footprint entry, in plain words for display: a one-line summary for the
+/// collapsed row and the detail rows (labels as ReportMate's Windows System module uses them).
+/// </summary>
 public sealed record FootprintStatus(
-    string FriendlyName, string Name, string KindText, string Description,
-    string State, string LastResult, string Trigger);
+    string FriendlyName, FootprintKind Kind, string State, string Summary, IReadOnlyList<FootprintDetail> Details)
+{
+    public bool IsRunning => State == "Running";
+    public bool IsReady => State == "Ready";
+    /// <summary>Stopped, Disabled, Not installed or Unknown: the neutral dot.</summary>
+    public bool IsNeutral => !IsRunning && !IsReady;
+}
+
+/// <summary>What the Task Scheduler reports for one task.</summary>
+public sealed record TaskSnapshot(
+    string Path, bool Enabled, int State, DateTime LastRunTime, int LastTaskResult, DateTime NextRunTime, string Xml);
+
+/// <summary>What the service control manager reports for one service.</summary>
+public sealed record ServiceSnapshot(
+    string StartMode, bool DelayedStart, string Status, string? Account, string? PathName, int Win32ExitCode);
 
 /// <summary>
 /// The Windows services and scheduled tasks the MSI installs, and a read-only look at their
 /// current state for the Prefs tab. The list is the installer's own (installer/Product.wxs):
-/// it registers one scheduled task and no services. Querying never needs elevation; anything
-/// the caller may not read shows as "Unknown".
+/// it registers one scheduled task and no services, so only tasks are queried. Querying never
+/// needs elevation; a value that exists but cannot be read shows as "Unknown".
 /// </summary>
 public static class InstallFootprint
 {
@@ -46,8 +65,9 @@ public static class InstallFootprint
     private static FootprintStatus Query(FootprintItem item) => item.Kind switch
     {
         FootprintKind.ScheduledTask => QueryTask(item),
-        // The installer registers no services, so there is nothing to query here yet.
-        _ => Row(item, "Unknown", "—", "—"),
+        // The installer registers no services, so none are queried; a service entry added to
+        // Items needs a query that fills a ServiceSnapshot for ServiceStatus.
+        _ => Unreadable(item),
     };
 
     private static FootprintStatus QueryTask(FootprintItem item)
@@ -56,32 +76,102 @@ public static class InstallFootprint
         {
             var type = Type.GetTypeFromProgID("Schedule.Service");
             if (type is null)
-                return Row(item, "Unknown", "—", "—");
+                return Unreadable(item);
 
             dynamic service = Activator.CreateInstance(type)!;
             service.Connect();
             dynamic task = service.GetFolder("\\").GetTask(item.Name);
 
-            int state = task.State;
-            DateTime lastRun = task.LastRunTime;
-            int lastResult = task.LastTaskResult;
-            string xml = task.Xml;
-
-            return Row(item, DescribeTaskState(state), DescribeTaskResult(lastRun, lastResult), DescribeTaskTriggers(xml));
+            return TaskStatus(item, new TaskSnapshot(
+                (string)task.Path, (bool)task.Enabled, (int)task.State, (DateTime)task.LastRunTime,
+                (int)task.LastTaskResult, (DateTime)task.NextRunTime, (string)task.Xml));
         }
         catch (Exception ex) when (ex.HResult is HResultFileNotFound or HResultPathNotFound)
         {
-            return Row(item, "Not installed", "—", "—");
+            return NotInstalled(item);
         }
         catch (Exception)
         {
             // Access denied for a standard user, or the scheduler is unavailable.
-            return Row(item, "Unknown", "Unknown", "Unknown");
+            return Unreadable(item);
         }
     }
 
-    private static FootprintStatus Row(FootprintItem item, string state, string lastResult, string trigger) =>
-        new(item.FriendlyName, item.Name, DescribeKind(item.Kind), item.Description, state, lastResult, trigger);
+    // ── Rows ─────────────────────────────────────────────────────
+
+    /// <summary>The collapsed summary and detail rows for a task.</summary>
+    public static FootprintStatus TaskStatus(FootprintItem item, TaskSnapshot task)
+    {
+        var state = DescribeTaskState(task.State);
+        var triggers = DescribeTaskTriggers(task.Xml);
+        var neverRun = task.LastTaskResult == SchedTaskHasNotRun || task.LastRunTime.Year < 2000;
+
+        var summary = Join(DescribeKind(item.Kind), triggers,
+            neverRun ? "Never run" : $"Last result {FormatResultCode(task.LastTaskResult)}");
+
+        var details = new List<FootprintDetail>
+        {
+            new("Name", task.Path),
+            new("Start type", task.Enabled ? "Enabled" : "Disabled"),
+            new("Status", state),
+        };
+        AddIfPresent(details, "Account", DescribeTaskPrincipal(task.Xml));
+        AddIfPresent(details, "Path and arguments", DescribeTaskActions(task.Xml));
+        details.Add(new("Triggers", triggers));
+        details.Add(new("Last run", neverRun ? "Never" : FormatDate(task.LastRunTime)));
+        details.Add(new("Last result", DescribeTaskResult(task.LastRunTime, task.LastTaskResult)));
+        details.Add(new("Next run", task.NextRunTime.Year < 2000 ? "Not scheduled" : FormatDate(task.NextRunTime)));
+
+        return new(item.FriendlyName, item.Kind, state, summary, details);
+    }
+
+    /// <summary>The collapsed summary and detail rows for a service.</summary>
+    public static FootprintStatus ServiceStatus(FootprintItem item, ServiceSnapshot service)
+    {
+        var startType = DescribeServiceStartType(service.StartMode, service.DelayedStart);
+        var state = startType == "Disabled" ? "Disabled" : service.Status;
+
+        var details = new List<FootprintDetail>
+        {
+            new("Name", item.Name),
+            new("Start type", startType),
+            new("Status", state),
+        };
+        AddIfPresent(details, "Account", service.Account);
+        AddIfPresent(details, "Path and arguments", service.PathName);
+        details.Add(new("Triggers", DescribeStartType(service.StartMode, service.DelayedStart)));
+        if (service.Status == "Stopped")
+            details.Add(new("Last result", DescribeServiceResult(running: false, service.Win32ExitCode)));
+
+        return new(item.FriendlyName, item.Kind, state,
+            Join(DescribeKind(item.Kind), startType, service.Account), details);
+    }
+
+    private static FootprintStatus NotInstalled(FootprintItem item) =>
+        new(item.FriendlyName, item.Kind, "Not installed", Join(DescribeKind(item.Kind), "Not installed"),
+            [new("Name", item.Name), new("Status", "Not installed")]);
+
+    private static FootprintStatus Unreadable(FootprintItem item)
+    {
+        var details = new List<FootprintDetail> { new("Name", item.Name) };
+        var labels = item.Kind == FootprintKind.ScheduledTask
+            ? new[] { "Start type", "Status", "Account", "Path and arguments", "Triggers", "Last run", "Last result", "Next run" }
+            : new[] { "Start type", "Status", "Account", "Path and arguments", "Triggers" };
+        details.AddRange(labels.Select(l => new FootprintDetail(l, "Unknown")));
+        return new(item.FriendlyName, item.Kind, "Unknown", DescribeKind(item.Kind), details);
+    }
+
+    private static void AddIfPresent(List<FootprintDetail> details, string label, string? value)
+    {
+        if (!string.IsNullOrWhiteSpace(value))
+            details.Add(new(label, value));
+    }
+
+    private static string Join(params string?[] parts) =>
+        string.Join(" · ", parts.Where(p => !string.IsNullOrWhiteSpace(p)));
+
+    // Times follow the user's culture: "g" (short date and time) here, "t" for trigger times.
+    private static string FormatDate(DateTime value) => value.ToString("g", CultureInfo.CurrentCulture);
 
     // ── Plain-words formatting ───────────────────────────────────
 
@@ -98,38 +188,90 @@ public static class InstallFootprint
         _ => "Unknown",
     };
 
+    /// <summary>A result code as the summary shows it: 0, or the HRESULT in hex.</summary>
+    public static string FormatResultCode(int code) => code == 0 ? "0" : $"0x{code:X8}";
+
     /// <summary>
-    /// Last run time and result in words: "Never run", or "Succeeded" / "Failed (0x…)" with the
-    /// run time. The scheduler reports a task that has never run with a zero date or 0x41303.
+    /// The last result in words: "Succeeded", "Failed (0x…)" or "Never run". The scheduler
+    /// reports a task that has never run with a zero date or 0x41303.
     /// </summary>
     public static string DescribeTaskResult(DateTime lastRun, int lastResult)
     {
         if (lastResult == SchedTaskHasNotRun || lastRun.Year < 2000)
             return "Never run";
 
-        var outcome = lastResult switch
+        return lastResult switch
         {
             0 => "Succeeded",
             SchedTaskRunning => "Running",
             _ => $"Failed (0x{lastResult:X8})",
         };
-        return $"{outcome} — {lastRun.ToString("MMM d, yyyy h:mm tt", CultureInfo.InvariantCulture)}";
     }
 
-    /// <summary>A service start type in words ("Starts automatically at boot", …).</summary>
-    public static string DescribeStartType(string startType, bool delayed) => startType switch
+    /// <summary>A service start mode as a start type: Automatic, Automatic (delayed), Manual, Disabled.</summary>
+    public static string DescribeServiceStartType(string startMode, bool delayed) => startMode switch
     {
-        "Automatic" when delayed => "Starts automatically (delayed) at boot",
-        "Automatic" => "Starts automatically at boot",
-        "Boot" or "System" => "Starts with Windows",
-        "Manual" => "Starts manually",
+        "Automatic" or "Auto" when delayed => "Automatic (delayed)",
+        "Automatic" or "Auto" => "Automatic",
+        "Boot" or "System" => "Automatic",
+        "Manual" => "Manual",
         "Disabled" => "Disabled",
+        _ => "Unknown",
+    };
+
+    /// <summary>A service start mode as a trigger in words ("At boot", …).</summary>
+    public static string DescribeStartType(string startMode, bool delayed) => startMode switch
+    {
+        "Automatic" or "Auto" when delayed => "At boot (delayed)",
+        "Automatic" or "Auto" => "At boot",
+        "Boot" or "System" => "With Windows",
+        "Manual" => "Manually",
+        "Disabled" => "Never (disabled)",
         _ => "Unknown",
     };
 
     /// <summary>A stopped service's Win32 exit code in words; "—" while it runs.</summary>
     public static string DescribeServiceResult(bool running, int win32ExitCode) =>
         running ? "—" : $"Exit code {win32ExitCode}";
+
+    /// <summary>
+    /// The account a task runs as, from its principal: the user or group, with well-known SIDs
+    /// named. Null when the definition names neither.
+    /// </summary>
+    public static string? DescribeTaskPrincipal(string taskXml)
+    {
+        var principal = Parse(taskXml)?.Root?.Element(TaskNs + "Principals")?.Element(TaskNs + "Principal");
+        var id = (string?)principal?.Element(TaskNs + "UserId") ?? (string?)principal?.Element(TaskNs + "GroupId");
+        if (string.IsNullOrWhiteSpace(id))
+            return null;
+        return id.Trim() switch
+        {
+            "S-1-5-18" => "SYSTEM",
+            "S-1-5-19" => "LOCAL SERVICE",
+            "S-1-5-20" => "NETWORK SERVICE",
+            "S-1-5-32-544" => "Administrators",
+            "S-1-5-32-545" => "Users",
+            var other => other,
+        };
+    }
+
+    /// <summary>Each Exec action's command and arguments, one per line. Null when there are none.</summary>
+    public static string? DescribeTaskActions(string taskXml)
+    {
+        var lines = Parse(taskXml)?.Root?.Element(TaskNs + "Actions")?.Elements(TaskNs + "Exec")
+            .Select(e => ((string?)e.Element(TaskNs + "Command") ?? "").Trim()
+                         + (string.IsNullOrWhiteSpace((string?)e.Element(TaskNs + "Arguments"))
+                             ? "" : " " + ((string)e.Element(TaskNs + "Arguments")!).Trim()))
+            .Where(l => l.Length > 0)
+            .ToList();
+        return lines is { Count: > 0 } ? string.Join("\n", lines) : null;
+    }
+
+    private static XDocument? Parse(string xml)
+    {
+        try { return XDocument.Parse(xml); }
+        catch (XmlException) { return null; }
+    }
 
     /// <summary>
     /// The enabled triggers of a task definition (Task Scheduler XML) in words, joined with "; ".
@@ -197,12 +339,12 @@ public static class InstallFootprint
 
     private static string FormatTime(XElement trigger) =>
         TryBoundary(trigger, out var start)
-            ? start.ToString("h:mm tt", CultureInfo.InvariantCulture)
+            ? start.ToString("t", CultureInfo.CurrentCulture)
             : "an unknown time";
 
     private static string FormatBoundary(XElement trigger) =>
         TryBoundary(trigger, out var start)
-            ? start.ToString("MMM d, yyyy h:mm tt", CultureInfo.InvariantCulture)
+            ? FormatDate(start)
             : "an unknown time";
 
     // StartBoundary is local wall-clock time, sometimes with an offset; the wall-clock part is
