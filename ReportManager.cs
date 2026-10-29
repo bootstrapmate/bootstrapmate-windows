@@ -5,7 +5,6 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
-using Microsoft.Win32;
 using BootstrapMate.Core;
 
 namespace BootstrapMate
@@ -109,18 +108,33 @@ namespace BootstrapMate
                 var other => other.ToString().ToUpperInvariant()
             };
 
-        /// <summary>Best-effort hardware serial number from the SMBIOS registry key.</summary>
+        /// <summary>Best-effort BIOS or motherboard serial, matching enrollment identity.</summary>
         private static string? SerialNumber()
+            => HardwareSerialNumber.Resolve(
+                () => ReadSerialNumber("Win32_BIOS"),
+                () => ReadSerialNumber("Win32_BaseBoard"));
+
+        private static string? ReadSerialNumber(string className)
         {
             try
             {
-                using var key = Registry.LocalMachine.OpenSubKey(@"HARDWARE\DESCRIPTION\System\BIOS");
-                return key?.GetValue("SystemSerialNumber") as string;
+                using var searcher = new System.Management.ManagementObjectSearcher($"SELECT SerialNumber FROM {className}");
+                using var results = searcher.Get();
+                foreach (var obj in results)
+                {
+                    using (obj)
+                    {
+                        var serial = HardwareSerialNumber.Normalize(obj["SerialNumber"]?.ToString());
+                        if (serial != null)
+                            return serial;
+                    }
+                }
             }
-            catch
+            catch (Exception ex)
             {
-                return null;
+                Logger.Warning($"{className} serial lookup for reporting failed: {ex.Message}");
             }
+            return null;
         }
     }
 }
